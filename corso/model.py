@@ -116,5 +116,37 @@ class Corso:
 
         return _consolidate_board(mutable_board, (row,))
 
-    def _expand(self, row: int, column: int):
-        """ """
+    def _expand(self, row_index: int, column_index: int) -> Board:
+        """Expand a marble by reallocating the minimal amount of state.
+
+        Return the new board.
+        """
+        mutable_board = _mutable_board(self.board)
+        cell_state = _cell_state(self.player_index, False)
+
+        mutable_row_indeces = set()
+        fringe = [(row_index, column_index)]
+        while fringe:
+            popped_row, popped_col = fringe.pop()
+
+            if popped_row not in mutable_row_indeces:
+                mutable_row_indeces.add(popped_row)
+                _mutable_row(mutable_board, popped_row)
+
+            cur_cell = mutable_board[popped_row][popped_col]
+            mutable_board[popped_row][popped_col] = cell_state
+
+            # Keep expanding only if selected cell is a marble
+            if not cur_cell.marble:
+                continue
+
+            if row_index > 0:
+                fringe.append((popped_row - 1, popped_col))
+            if row_index < self.height - 1:
+                fringe.append((popped_row + 1, popped_col))
+            if column_index > 0:
+                fringe.append((popped_row, popped_col - 1))
+            if column_index < self.width - 1:
+                fringe.append((popped_row, popped_col + 1))
+
+        return _consolidate_board(mutable_board, mutable_row_indeces)
