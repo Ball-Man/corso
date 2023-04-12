@@ -1,3 +1,4 @@
+import enum
 from functools import lru_cache
 from collections import namedtuple
 from typing import Iterable, Sequence
@@ -11,6 +12,13 @@ Board = tuple[tuple[CellState, ...], ...]
 MutableBoard = Sequence[Sequence[CellState]]
 EMPTY_BOARD = tuple([tuple([EMPTY_CELL] * DEFAULT_BOARD_SIZE)]
                     * DEFAULT_BOARD_SIZE)
+
+
+class Terminal(enum.IntEnum):
+    """Terminal states for a game."""
+    NOT_TERMINAL = 0
+    DRAW = 1
+    WON = 2
 
 
 @lru_cache()
@@ -151,3 +159,29 @@ class Corso:
                 fringe.append((popped_row, popped_col + 1))
 
         return _consolidate_board(mutable_board, mutable_row_indeces)
+
+    @property
+    def terminal(self) -> tuple[Terminal, int]:
+        """Retrieve whether the state is terminal.
+
+        Returns a pair ``(terminal_state, winner)``. If the game is not
+        terminal or it is a draw, the second value has no meaning.
+        In case of a won game, the second value is the winner player's
+        index (indexed from 1).
+        """
+        scores = [0] * (self.player_num + 1)
+
+        for row in self.board:
+            for cell in row:
+                scores[cell.player_index] += 1
+
+        if scores[0] > 0:
+            return Terminal.NOT_TERMINAL, 0
+
+        # Allocating a set is not necessary, but still faster than
+        # a pure python loop
+        if len(set(scores[1:])) == 1:
+            return Terminal.DRAW, 0
+
+        # Argmax: 3+ times faster than a single for loop
+        return Terminal.WON, scores.index(max(scores[1:]))
