@@ -141,13 +141,13 @@ class Corso:
             if not cur_cell.marble:
                 continue
 
-            if row_index > 0:
+            if popped_row > 0:
                 fringe.append((popped_row - 1, popped_col))
-            if row_index < self.height - 1:
+            if popped_row < self.height - 1:
                 fringe.append((popped_row + 1, popped_col))
-            if column_index > 0:
+            if popped_col > 0:
                 fringe.append((popped_row, popped_col - 1))
-            if column_index < self.width - 1:
+            if popped_col < self.width - 1:
                 fringe.append((popped_row, popped_col + 1))
 
         return _consolidate_board(mutable_board, mutable_row_indeces)
