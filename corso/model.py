@@ -75,7 +75,8 @@ class Corso:
         for row_index, row in enumerate(self.board):
             for col_index, cell in enumerate(row):
                 if (cell.player_index == 0
-                        or cell.player_index == self.player_index):
+                    or cell.player_index == self.player_index
+                        and cell.marble):
                     yield _action(self.player_index, row_index, col_index)
 
     @property
