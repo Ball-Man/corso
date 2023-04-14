@@ -55,6 +55,7 @@ def cli_game():
         row, col = get_input(state)
         state = state.step(Action(state.player_index, row, col))
 
+    print_board(state.board)
     print(state.terminal)
 
 
