@@ -19,7 +19,7 @@ def print_board(board: Board):
     print('\n'.join(map(' '.join, output_board)))
 
 
-def get_input(state: Corso) -> tuple[int, int]:
+def get_input_pair(state: Corso) -> tuple[int, int]:
     """Retrieve row, column input from user."""
     while True:
         input_string = input()
@@ -46,14 +46,29 @@ def get_input(state: Corso) -> tuple[int, int]:
         return row, col
 
 
+def get_action(state: Corso) -> Action:
+    """Retrieve an action from input.
+
+    Refuses actions that are not legal.
+    """
+    while True:
+        row, col = get_input_pair(state)
+        candidate_action = Action(state.player_index, row, col)
+
+        # Accept legal action
+        if candidate_action in state.actions:
+            return candidate_action
+
+        print('Invalid move')
+
+
 def cli_game():
     state = Corso()
 
     while not state.terminal[0]:
         print('Player', state.player_index)
         print_board(state.board)
-        row, col = get_input(state)
-        state = state.step(Action(state.player_index, row, col))
+        state = state.step(get_action(state))
 
     print_board(state.board)
     print(state.terminal)
