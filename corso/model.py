@@ -40,18 +40,30 @@ def _action(player_index: int, row: int, col: int) -> Action:
 
 
 def _mutable_board(board: Board) -> MutableBoard:
-    """ """
+    """Return a mutable version of the given board.
+
+    Each row is still immutable (they are not reallocated), but can now
+    be replaced if necessary.
+    """
     return list(board)
 
 
 def _mutable_row(board: MutableBoard, row_index: int) -> MutableBoard:
-    """ """
+    """Given a mutable board, substitute a row with a mutable version.
+
+    This causes the reallocation (only) of the selected row.
+    """
     board[row_index] = list(board[row_index])
     return board[row_index]
 
 
 def _consolidate_board(board: MutableBoard, rows: Iterable[int]) -> Board:
-    """ """
+    """Given a mutable board, return a consolidated immutable one.
+
+    This causes the reallocation of the selected rows. When
+    consolidating, select rows that were previously altered to be
+    mutable.
+    """
     for row in rows:
         board[row] = tuple(board[row])
 
