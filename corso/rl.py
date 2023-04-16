@@ -131,12 +131,14 @@ class PolicyNetwork(nn.Module):
         return policy, action_index, Action(state.player_index, row, column)
 
 
-def reinforce():
+def reinforce(episodes=1000):
     """ """
     policy_net = PolicyNetwork()
     optimizer = optim.Adam(policy_net.parameters())
 
-    for i in range(300):            # Episodes
+    loss_history = deque()
+
+    for i in range(episodes):            # Episodes
         optimizer.zero_grad()
 
         probability_tensors = deque()
@@ -156,7 +158,7 @@ def reinforce():
             state = state.step(action)
             terminal, winner = state.terminal
             if terminal:
-                # print(f'Ending episode {i + 1}')
+                print(f'Ending episode {i + 1}')
                 result = winner - 1
                 break
 
@@ -176,6 +178,10 @@ def reinforce():
         probability_batch = torch.stack(tuple(probability_tensors))
 
         loss = (-cumulative_rewards * probability_batch).mean()
-        print(loss.item())
         loss.backward()
         optimizer.step()
+
+        loss_history.append(loss.item())
+        print('Loss', loss.item())
+
+    return loss_history
