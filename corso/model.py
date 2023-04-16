@@ -1,4 +1,6 @@
+import abc
 import enum
+import random
 from functools import lru_cache
 from collections import namedtuple
 from typing import Iterable, Sequence
@@ -197,3 +199,22 @@ class Corso:
 
         # Argmax: 3+ times faster than a single for loop
         return Terminal.WON, scores.index(max(scores[1:]))
+
+
+class Player(abc.ABC):
+    """Base class for an automated player."""
+
+    @abc.abstractmethod
+    def select_action(self, state: Corso) -> Action:
+        """Inherit to provide an action selection strategy."""
+
+
+class RandomPlayer(Player):
+    """Select moves randomly."""
+
+    def __init__(self, rng=random.Random()):
+        self.rng = rng
+
+    def select_action(self, state: Corso) -> Action:
+        """Return a random action."""
+        return self.rng.choice(state.actions)
