@@ -3,7 +3,6 @@ import random
 from functools import lru_cache
 from collections import deque
 
-import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -115,3 +114,32 @@ class PolicyNetwork(nn.Module):
 
         row, column = divmod(action_index, state.width)
         return Action(state.player_index, row, column)
+
+
+def reinforce():
+    """ """
+    policy_net = PolicyNetwork()
+
+    for i in range(300):            # Episodes
+        policy_tensors = deque()
+        result = 0
+
+        state = Corso()
+        # Iterations: max number of moves in a game of corso is w * h
+        # as the longest game would see each player placing a marble
+        # without expanding.
+        for _ in range(state.width * state.height):
+            action = policy_net.sample_action(state)
+            policy_tensors.append(state)
+
+            if action not in state.actions:
+                raise ValueError(f'Action {action} is not legal.')
+
+            state = state.step(action)
+            terminal, winner = state.terminal
+            if terminal:
+                print(f'Ending episode {i + 1}')
+                result = winner - 1
+                break
+
+        print(result)
