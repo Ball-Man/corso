@@ -94,26 +94,40 @@ class PolicyNetwork(nn.Module):
 
         return F.log_softmax(self.output(batch), dim=1)
 
-    def sample_action(self, state: Corso) -> Action:
-        """Sample action from policy."""
+    def sample_action(self, state: Corso) -> tuple[torch.Tensor, int, Action]:
+        """Sample action from policy.
+
+        Return value is a tuple in the form::
+
+        - Output tensor from the network (log action probabilities)
+        - Sampled action index (``network_output[index]`` would result
+            in the log probability of the chosen action)
+        - The actual action object built from the sampled index
+        """
         policy = self(model_tensor(state).unsqueeze(0))[0]
 
         # Not all moves given by the network are legal. Mask illegal
         # moves with 0 probabilities.
-        policy_mask = torch.zeros_like(policy).view(state.height,
-                                                    state.width)
+        policy_mask = torch.zeros_like(
+            policy, dtype=torch.bool).view(state.height, state.width)
         for action in state._iter_actions():
             policy_mask[action[1:]] = 1
+        policy_mask = policy_mask.flatten()
+
+        masked_policy = policy_mask * policy.exp()
+        # If underflowing, sample uniformly between legal moves
+        if masked_policy[policy_mask].sum() < 1e12:
+            masked_policy[policy_mask] += 1.
 
         # TODO: reproducibility
         # random.choices is 3+ times faster than np.random.choice in
         # this context.
         action_index, = random.choices(
             _action_indeces(state.width, state.height),
-            policy_mask.flatten() * policy.exp())
+            masked_policy)
 
         row, column = divmod(action_index, state.width)
-        return Action(state.player_index, row, column)
+        return policy, action_index, Action(state.player_index, row, column)
 
 
 def reinforce():
