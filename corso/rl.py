@@ -92,7 +92,7 @@ class PolicyNetwork(nn.Module):
         batch = F.relu(self.dense2(batch))
         batch = self.dropout2(batch)
 
-        return F.log_softmax(self.output(batch))
+        return F.log_softmax(self.output(batch), dim=1)
 
     def sample_action(self, state: Corso) -> Action:
         """Sample action from policy."""
