@@ -4,6 +4,7 @@ from functools import lru_cache
 from collections import deque
 
 import torch
+from torch import optim
 from torch import nn
 from torch.nn import functional as F
 
@@ -133,9 +134,12 @@ class PolicyNetwork(nn.Module):
 def reinforce():
     """ """
     policy_net = PolicyNetwork()
+    optimizer = optim.Adam(policy_net.parameters())
 
     for i in range(300):            # Episodes
-        policy_tensors = deque()
+        optimizer.zero_grad()
+
+        probability_tensors = deque()
         result = 0
 
         state = Corso()
@@ -143,8 +147,8 @@ def reinforce():
         # as the longest game would see each player placing a marble
         # without expanding.
         for _ in range(state.width * state.height):
-            action = policy_net.sample_action(state)
-            policy_tensors.append(state)
+            logprobs, action_index, action = policy_net.sample_action(state)
+            probability_tensors.append(logprobs[action_index])
 
             if action not in state.actions:
                 raise ValueError(f'Action {action} is not legal.')
@@ -152,8 +156,26 @@ def reinforce():
             state = state.step(action)
             terminal, winner = state.terminal
             if terminal:
-                print(f'Ending episode {i + 1}')
+                # print(f'Ending episode {i + 1}')
                 result = winner - 1
                 break
 
-        print(result)
+        # Assign rewards based on episode result (winner)
+        rewards = torch.full((len(probability_tensors),), -1)
+        winner_index_map = list(range(result, len(probability_tensors), 2))
+        rewards[winner_index_map] = 1
+
+        # Cumulative rewards (no discount)
+        cumulative_rewards = torch.zeros_like(rewards)
+        cumulative_rewards[-2:] = rewards[-2:]      # Prevent 0 reward
+        for i in reversed(range(0, len(cumulative_rewards) - 2)):
+            # Pick rewards by skipping one action, so that the winner
+            # and the loser actions can have separate counts
+            cumulative_rewards[i] = cumulative_rewards[i + 2] + rewards[i]
+
+        probability_batch = torch.stack(tuple(probability_tensors))
+
+        loss = (-cumulative_rewards * probability_batch).mean()
+        print(loss.item())
+        loss.backward()
+        optimizer.step()
