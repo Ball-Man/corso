@@ -1,6 +1,7 @@
 """Reinforcement learning approaches for the game."""
 import random
 from functools import lru_cache
+from itertools import cycle
 from collections import deque
 
 import torch
@@ -8,7 +9,7 @@ from torch import optim
 from torch import nn
 from torch.nn import functional as F
 
-from corso.model import (Corso, CellState, Action,
+from corso.model import (Corso, CellState, Action, Player, RandomPlayer,
                          DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM)
 
 
@@ -185,3 +186,28 @@ def reinforce(episodes=1000):
         print('Loss', loss.item())
 
     return loss_history
+
+
+def evaluate(player1: Player, player2: Player,
+             starting_state=Corso(),
+             n_games=1) -> tuple[int, int, int]:
+    """Play automated games and return the results.
+
+    The returned tuple is in the form (draw, p1 wins, p2 wins).
+    """
+    results = [0, 0, 0]
+    players = cycle((player1, player2))
+
+    for _ in range(n_games):
+        state = starting_state
+
+        terminal, winner = state.terminal
+        while not terminal:
+            player = next(players)
+            state = state.step(player.select_action(state))
+
+            terminal, winner = state.terminal
+
+        results[winner] += 1
+
+    return tuple(results)
