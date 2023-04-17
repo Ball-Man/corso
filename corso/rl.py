@@ -166,7 +166,7 @@ def reinforce(episodes=1000, discount=0.9):
                 break
 
         # Assign rewards based on episode result (winner)
-        rewards = torch.full((len(probability_tensors),), -1)
+        rewards = torch.full((len(probability_tensors),), 0)
         winner_index_map = list(range(result, len(probability_tensors), 2))
         rewards[winner_index_map] = 1
 
