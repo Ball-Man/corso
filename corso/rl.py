@@ -142,6 +142,7 @@ def reinforce(episodes=1000):
 
     for episode in range(episodes):            # Episodes
         optimizer.zero_grad()
+        policy_net.train()
 
         probability_tensors = deque()
         result = 0
@@ -188,6 +189,8 @@ def reinforce(episodes=1000):
 
         # Evaluation
         if episode % 100 == 0:
+            policy_net.eval()
+
             evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
                                           RandomPlayer(), n_games=100)
             evaluation_history.append(evaluation_results)
