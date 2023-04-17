@@ -77,10 +77,13 @@ class PolicyNetwork(nn.Module):
 
         board_w, board_h = board_size
         self.input_dropout = nn.Dropout(0.2)
+        # self.input_dropout = nn.Identity()
         self.dense1 = nn.Linear(board_w * board_h * player_num * 2 + 1, 64)
+        # self.dropout1 = nn.Identity()
         self.dropout1 = nn.Dropout(0.2)
         self.dense2 = nn.Linear(64, 32)
         self.dropout2 = nn.Dropout(0.2)
+        # self.dropout2 = nn.Identity()
         self.output = nn.Linear(32, board_w * board_h)
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
@@ -96,15 +99,15 @@ class PolicyNetwork(nn.Module):
 
         return F.log_softmax(self.output(batch), dim=1)
 
-    def sample_action(self, state: Corso) -> tuple[torch.Tensor, int, Action]:
+    def get_masked_policy(self, state: Corso) -> tuple[torch.Tensor,
+                                                       torch.Tensor]:
         """Sample action from policy.
 
         Return value is a tuple in the form::
 
         - Output tensor from the network (log action probabilities)
-        - Sampled action index (``network_output[index]`` would result
-            in the log probability of the chosen action)
-        - The actual action object built from the sampled index
+        - Action policy as a valid density vector. Illegal moves are
+            masked to 0 probability.
         """
         policy = self(model_tensor(state).unsqueeze(0))[0]
 
@@ -121,15 +124,29 @@ class PolicyNetwork(nn.Module):
         if masked_policy[policy_mask].sum() < 1e12:
             masked_policy[policy_mask] += 1.
 
-        # TODO: reproducibility
-        # random.choices is 3+ times faster than np.random.choice in
-        # this context.
-        action_index, = random.choices(
-            _action_indeces(state.width, state.height),
-            masked_policy)
+        return policy, masked_policy / masked_policy.sum()
 
-        row, column = divmod(action_index, state.width)
-        return policy, action_index, Action(state.player_index, row, column)
+
+def greedy_sample_action(state: Corso,
+                         action_policy: torch.Tensor) -> tuple[int, Action]:
+    """Given an action policy, return best scoring action."""
+    action_index = action_policy.argmax().item()
+    row, column = divmod(action_index, state.width)
+    return action_index, Action(state.player_index, row, column)
+
+
+def sample_action(state: Corso,
+                  action_policy: torch.Tensor) -> tuple[int, Action]:
+    """Given an action policy, return a sampled action accordingly."""
+    # TODO: reproducibility
+    # random.choices is 3+ times faster than np.random.choice in
+    # this context.
+    action_index, = random.choices(
+        _action_indeces(state.width, state.height),
+        action_policy)
+
+    row, column = divmod(action_index, state.width)
+    return action_index, Action(state.player_index, row, column)
 
 
 def reinforce(episodes=1000, discount=0.9):
@@ -152,7 +169,10 @@ def reinforce(episodes=1000, discount=0.9):
         # as the longest game would see each player placing a marble
         # without expanding.
         for _ in range(state.width * state.height):
-            logprobs, action_index, action = policy_net.sample_action(state)
+            # Retrieve policy from network, mask illegal moves and sample
+            logprobs, action_policy = policy_net.get_masked_policy(state)
+            action_index, action = sample_action(state, action_policy)
+
             probability_tensors.append(logprobs[action_index])
 
             if action not in state.actions:
@@ -234,5 +254,5 @@ class PolicyNetworkPlayer(Player):
 
     def select_action(self, state: Corso) -> Action:
         """ """
-        _, _, action = self.policy_network.sample_action(state)
-        return action
+        _, action_policy = self.policy_network.get_masked_policy(state)
+        return greedy_sample_action(state, action_policy)[1]
