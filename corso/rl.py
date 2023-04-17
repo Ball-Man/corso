@@ -138,8 +138,9 @@ def reinforce(episodes=1000):
     optimizer = optim.Adam(policy_net.parameters())
 
     loss_history = deque()
+    evaluation_history = deque()
 
-    for i in range(episodes):            # Episodes
+    for episode in range(episodes):            # Episodes
         optimizer.zero_grad()
 
         probability_tensors = deque()
@@ -159,7 +160,7 @@ def reinforce(episodes=1000):
             state = state.step(action)
             terminal, winner = state.terminal
             if terminal:
-                print(f'Ending episode {i + 1}')
+                print(f'Ending episode {episode + 1}')
                 result = winner - 1
                 break
 
@@ -185,7 +186,14 @@ def reinforce(episodes=1000):
         loss_history.append(loss.item())
         print('Loss', loss.item())
 
-    return loss_history
+        # Evaluation
+        if episode % 100 == 0:
+            evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
+                                          RandomPlayer(), n_games=100)
+            evaluation_history.append(evaluation_results)
+            print('Evaluation results', evaluation_results)
+
+    return loss_history, evaluation_history
 
 
 def evaluate(player1: Player, player2: Player,
@@ -211,3 +219,15 @@ def evaluate(player1: Player, player2: Player,
         results[winner] += 1
 
     return tuple(results)
+
+
+class PolicyNetworkPlayer(Player):
+    """Player whose policy is computed via :class:`PolicyNetwork`."""
+
+    def __init__(self, network: PolicyNetwork):
+        self.policy_network = network
+
+    def select_action(self, state: Corso) -> Action:
+        """ """
+        _, _, action = self.policy_network.sample_action(state)
+        return action
