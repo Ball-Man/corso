@@ -132,7 +132,7 @@ class PolicyNetwork(nn.Module):
         return policy, action_index, Action(state.player_index, row, column)
 
 
-def reinforce(episodes=1000):
+def reinforce(episodes=1000, discount=0.9):
     """ """
     policy_net = PolicyNetwork()
     optimizer = optim.Adam(policy_net.parameters())
@@ -170,13 +170,15 @@ def reinforce(episodes=1000):
         winner_index_map = list(range(result, len(probability_tensors), 2))
         rewards[winner_index_map] = 1
 
-        # Cumulative rewards (no discount)
+        # Cumulative rewards
         cumulative_rewards = torch.zeros_like(rewards)
         cumulative_rewards[-2:] = rewards[-2:]      # Prevent 0 reward
+
         for i in reversed(range(0, len(cumulative_rewards) - 2)):
             # Pick rewards by skipping one action, so that the winner
             # and the loser actions can have separate counts
-            cumulative_rewards[i] = cumulative_rewards[i + 2] + rewards[i]
+            cumulative_rewards[i] = (discount * cumulative_rewards[i + 2]
+                                     + rewards[i])
 
         probability_batch = torch.stack(tuple(probability_tensors))
 
