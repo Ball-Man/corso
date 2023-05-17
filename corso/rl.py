@@ -186,6 +186,8 @@ def reinforce(episodes=1000, discount=0.9):
         # rewards based on this and on the winner
         if len(rewards) % 2 == 0:
             rewards[-(3 - winner)] = 1
+        else:
+            rewards[-winner] = 1
 
         # Account for draws
         # if winner == 0:
