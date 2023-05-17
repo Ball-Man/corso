@@ -10,7 +10,12 @@ from torch import nn
 from torch.nn import functional as F
 
 from corso.model import (Corso, CellState, Action, Player, RandomPlayer,
-                         DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM)
+                         DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM, EMPTY_CELL)
+
+BOARD2X2 = ((EMPTY_CELL, EMPTY_CELL), (EMPTY_CELL, EMPTY_CELL))
+BOARD3X3 = ((EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
+            (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
+            (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL))
 
 
 @lru_cache()
@@ -76,26 +81,15 @@ class PolicyNetwork(nn.Module):
         super().__init__()
 
         board_w, board_h = board_size
-        self.input_dropout = nn.Dropout(0.2)
-        # self.input_dropout = nn.Identity()
-        self.dense1 = nn.Linear(board_w * board_h * player_num * 2 + 1, 64)
-        # self.dropout1 = nn.Identity()
-        self.dropout1 = nn.Dropout(0.2)
-        self.dense2 = nn.Linear(64, 32)
-        self.dropout2 = nn.Dropout(0.2)
-        # self.dropout2 = nn.Identity()
-        self.output = nn.Linear(32, board_w * board_h)
+        self.dense1 = nn.Linear(board_w * board_h * player_num * 2 + 1, 32)
+        self.dense2 = nn.Linear(32, 16)
+        self.output = nn.Linear(16, board_w * board_h)
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         # batch = batch.flatten(1)
-        batch = self.input_dropout(batch)
-
         batch = F.relu(self.dense1(batch))
-        batch = self.dropout1(batch)
-
         batch = F.relu(self.dense2(batch))
-        batch = self.dropout2(batch)
 
         return F.log_softmax(self.output(batch), dim=1)
 
@@ -121,7 +115,7 @@ class PolicyNetwork(nn.Module):
 
         masked_policy = policy_mask * policy.exp()
         # If underflowing, sample uniformly between legal moves
-        if masked_policy[policy_mask].sum() < 1e12:
+        if masked_policy[policy_mask].sum() < 1e-12:
             masked_policy[policy_mask] += 1.
 
         return policy, masked_policy / masked_policy.sum()
@@ -151,8 +145,8 @@ def sample_action(state: Corso,
 
 def reinforce(episodes=1000, discount=0.9):
     """ """
-    policy_net = PolicyNetwork()
-    optimizer = optim.Adam(policy_net.parameters())
+    policy_net = PolicyNetwork((3, 3))
+    optimizer = optim.Adam(policy_net.parameters(), 0.001)
 
     loss_history = deque()
     evaluation_history = deque()
@@ -164,7 +158,7 @@ def reinforce(episodes=1000, discount=0.9):
         probability_tensors = deque()
         result = 0
 
-        state = Corso()
+        state = Corso(BOARD3X3)
         # Iterations: max number of moves in a game of corso is w * h
         # as the longest game would see each player placing a marble
         # without expanding.
@@ -186,9 +180,16 @@ def reinforce(episodes=1000, discount=0.9):
                 break
 
         # Assign rewards based on episode result (winner)
-        rewards = torch.full((len(probability_tensors),), 0)
-        winner_index_map = list(range(result, len(probability_tensors), 2))
-        rewards[winner_index_map] = 1
+        rewards = torch.zeros((len(probability_tensors),))
+
+        # The game could finish in an odd number of moves, adjust
+        # rewards based on this and on the winner
+        if len(rewards) % 2 == 0:
+            rewards[-(3 - winner)] = 1
+
+        # Account for draws
+        # if winner == 0:
+        #     rewards[-2:] = torch.tensor([0.5, 0.5])
 
         # Cumulative rewards
         cumulative_rewards = torch.zeros_like(rewards)
@@ -214,7 +215,8 @@ def reinforce(episodes=1000, discount=0.9):
             policy_net.eval()
 
             evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
-                                          RandomPlayer(), n_games=100)
+                                          RandomPlayer(),
+                                          n_games=100)
             evaluation_history.append(evaluation_results)
             print('Evaluation results', evaluation_results)
 
@@ -222,17 +224,17 @@ def reinforce(episodes=1000, discount=0.9):
 
 
 def evaluate(player1: Player, player2: Player,
-             starting_state=Corso(),
+             starting_state=Corso(BOARD3X3),
              n_games=1) -> tuple[int, int, int]:
     """Play automated games and return the results.
 
     The returned tuple is in the form (draw, p1 wins, p2 wins).
     """
     results = [0, 0, 0]
-    players = cycle((player1, player2))
 
     for _ in range(n_games):
         state = starting_state
+        players = cycle((player1, player2))
 
         terminal, winner = state.terminal
         while not terminal:
