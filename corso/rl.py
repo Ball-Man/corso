@@ -94,16 +94,19 @@ class PolicyNetwork(nn.Module):
         return F.log_softmax(self.output(batch), dim=1)
 
     def get_masked_policy(self, state: Corso) -> tuple[torch.Tensor,
+                                                       torch.Tensor,
                                                        torch.Tensor]:
         """Sample action from policy.
 
         Return value is a tuple in the form::
 
+        - Tensor representation of the given state
         - Output tensor from the network (log action probabilities)
         - Action policy as a valid density vector. Illegal moves are
             masked to 0 probability.
         """
-        policy = self(model_tensor(state).unsqueeze(0))[0]
+        state_tensor = model_tensor(state)
+        policy = self(state_tensor.unsqueeze(0))[0]
 
         # Not all moves given by the network are legal. Mask illegal
         # moves with 0 probabilities.
@@ -118,7 +121,7 @@ class PolicyNetwork(nn.Module):
         if masked_policy[policy_mask].sum() < 1e-12:
             masked_policy[policy_mask] += 1.
 
-        return policy, masked_policy / masked_policy.sum()
+        return state_tensor, policy, masked_policy / masked_policy.sum()
 
 
 def greedy_sample_action(state: Corso,
@@ -155,19 +158,23 @@ def reinforce(episodes=1000, discount=0.9):
         optimizer.zero_grad()
         policy_net.train()
 
-        probability_tensors = deque()
-        result = 0
+        state_tensors = deque()
+        action_indeces = deque()
+        winner = 1
 
         state = Corso(BOARD3X3)
         # Iterations: max number of moves in a game of corso is w * h
         # as the longest game would see each player placing a marble
         # without expanding.
         for _ in range(state.width * state.height):
-            # Retrieve policy from network, mask illegal moves and sample
-            logprobs, action_policy = policy_net.get_masked_policy(state)
-            action_index, action = sample_action(state, action_policy)
+            with torch.no_grad():
+                # Retrieve policy from network, mask illegal moves and sample
+                state_tensor, logprobs, action_policy = \
+                    policy_net.get_masked_policy(state)
+                action_index, action = sample_action(state, action_policy)
 
-            probability_tensors.append(logprobs[action_index])
+            state_tensors.append(state_tensor)
+            action_indeces.append(action_index)
 
             if action not in state.actions:
                 raise ValueError(f'Action {action} is not legal.')
@@ -176,11 +183,11 @@ def reinforce(episodes=1000, discount=0.9):
             terminal, winner = state.terminal
             if terminal:
                 print(f'Ending episode {episode + 1}')
-                result = winner - 1
+                # result = winner - 1
                 break
 
         # Assign rewards based on episode result (winner)
-        rewards = torch.zeros((len(probability_tensors),))
+        rewards = torch.zeros((len(state_tensors),))
 
         # The game could finish in an odd number of moves, adjust
         # rewards based on this and on the winner
@@ -203,9 +210,15 @@ def reinforce(episodes=1000, discount=0.9):
             cumulative_rewards[i] = (discount * cumulative_rewards[i + 2]
                                      + rewards[i])
 
-        probability_batch = torch.stack(tuple(probability_tensors))
+        # Recompute policy on the sequence of states and optimize.
+        # Recomputation is a potential slowdown w.r.t. using directly
+        # the scores computed during training, but allows for data
+        # augmentation.
+        policies_batch = policy_net(torch.stack(tuple(state_tensors)))
+        probabilities_batch = policies_batch[range(policies_batch.size(0)),
+                                             action_indeces]
 
-        loss = (-cumulative_rewards * probability_batch).mean()
+        loss = (-cumulative_rewards * probabilities_batch).mean()
         loss.backward()
         optimizer.step()
 
@@ -258,5 +271,6 @@ class PolicyNetworkPlayer(Player):
 
     def select_action(self, state: Corso) -> Action:
         """ """
-        _, action_policy = self.policy_network.get_masked_policy(state)
-        return greedy_sample_action(state, action_policy)[1]
+        with torch.no_grad():
+            _, _, action_policy = self.policy_network.get_masked_policy(state)
+            return greedy_sample_action(state, action_policy)[1]
