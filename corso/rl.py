@@ -3,6 +3,7 @@ import random
 from functools import lru_cache
 from itertools import cycle
 from collections import deque
+from typing import Iterable
 
 import torch
 from torch import optim
@@ -154,6 +155,8 @@ def reinforce(episodes=1000, discount=0.9):
     loss_history = deque()
     evaluation_history = deque()
 
+    bernoulli = torch.distributions.Bernoulli(0.5)
+
     for episode in range(episodes):            # Episodes
         optimizer.zero_grad()
         policy_net.train()
@@ -214,7 +217,13 @@ def reinforce(episodes=1000, discount=0.9):
         # Recomputation is a potential slowdown w.r.t. using directly
         # the scores computed during training, but allows for data
         # augmentation.
-        policies_batch = policy_net(torch.stack(tuple(state_tensors)))
+        inversion_map = bernoulli.sample((len(state_tensors),)).bool()
+        states_batch = torch.stack(tuple(state_tensors))
+        inverted_states = augmentation_inversion(states_batch[inversion_map],
+                                                 action_indeces, state.width,
+                                                 state.height)
+        states_batch[inversion_map] = inverted_states
+        policies_batch = policy_net(states_batch)
         probabilities_batch = policies_batch[range(policies_batch.size(0)),
                                              action_indeces]
 
@@ -236,6 +245,37 @@ def reinforce(episodes=1000, discount=0.9):
             print('Evaluation results', evaluation_results)
 
     return loss_history, evaluation_history
+
+
+def augmentation_inversion(state_tensors: torch.Tensor,
+                           action_indeces: Iterable[int],
+                           state_width: int,
+                           state_height: int) -> torch.Tensor:
+    """Invert player cells in the given tensors (all of them).
+
+    ``state_tensors`` is expected to be a stack of state tensors
+    (obtained through :func:`model_tensor`). The stack dimension must
+    be 0 (default behaviour of ``torch.stack``), similarly to a batch.
+
+    ``action_indeces`` shall be a collection of the indeces of the
+    actions executed for each given state in ```state_tensors` during
+    episode self-play. Some augmentation techniques (e.g. rotation)
+    may require manipulation of the action index to achieve invariance.
+    It is unused when applying inversion.
+    """
+    # Last value is the player index
+    # Dimensions: batch, height, width, cell binary vector (4)
+    planes = state_tensors[:, :-1].view(-1, state_height, state_width, 4)
+
+    # Invert player planes by swapping the first two values in each
+    # binary vector with the last two
+    planes = planes[:, :, :, [2, 3, 0, 1]]
+
+    # A new tensor has to be allocated in order to attach the current
+    # player's.
+    return torch.cat((planes.flatten(start_dim=1),
+                      1 - state_tensors[:, -1].unsqueeze(1)),
+                     dim=1)
 
 
 def evaluate(player1: Player, player2: Player,
