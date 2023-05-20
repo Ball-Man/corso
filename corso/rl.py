@@ -147,7 +147,8 @@ def sample_action(state: Corso,
     return action_index, Action(state.player_index, row, column)
 
 
-def reinforce(episodes=1000, discount=0.9):
+def reinforce(episodes=1000, discount=0.9,
+              starting_state: Corso = Corso(BOARD3X3)):
     """ """
     policy_net = PolicyNetwork((3, 3))
     optimizer = optim.Adam(policy_net.parameters(), 0.001)
@@ -165,7 +166,7 @@ def reinforce(episodes=1000, discount=0.9):
         action_indeces = deque()
         winner = 1
 
-        state = Corso(BOARD3X3)
+        state = starting_state
         # Iterations: max number of moves in a game of corso is w * h
         # as the longest game would see each player placing a marble
         # without expanding.
@@ -240,6 +241,7 @@ def reinforce(episodes=1000, discount=0.9):
 
             evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
                                           RandomPlayer(),
+                                          starting_state=starting_state,
                                           n_games=100)
             evaluation_history.append(evaluation_results)
             print('Evaluation results', evaluation_results)
@@ -279,7 +281,7 @@ def augmentation_inversion(state_tensors: torch.Tensor,
 
 
 def evaluate(player1: Player, player2: Player,
-             starting_state=Corso(BOARD3X3),
+             starting_state=Corso(),
              n_games=1) -> tuple[int, int, int]:
     """Play automated games and return the results.
 
