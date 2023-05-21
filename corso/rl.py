@@ -1,4 +1,7 @@
 """Reinforcement learning approaches for the game."""
+import os
+import os.path
+import json
 import random
 from functools import lru_cache
 from itertools import cycle
@@ -80,20 +83,20 @@ class PolicyNetwork(nn.Module):
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
                  first_hidden_size: int = 64,
                  num_hidden_layers: int = 2,
-                 player_num=DEFAULT_PLAYER_NUM):
+                 num_players=DEFAULT_PLAYER_NUM):
         super().__init__()
 
         self.first_hidden_size = first_hidden_size
         self.num_hidden_layers = num_hidden_layers
+        self.num_players = num_players
 
         board_w, board_h = board_size
-        self.board_w = board_w
-        self.board_h = board_h
+        self.board_size = board_size
 
         # W * H * players * 2 + 1 is the input size
         # If the number of hidden layers is 0, fall back to this
         # dimentions.
-        hidden_output_size = board_w * board_h * player_num * 2 + 1
+        hidden_output_size = board_w * board_h * num_players * 2 + 1
 
         layers = []
         for i in range(num_hidden_layers):
@@ -143,6 +146,49 @@ class PolicyNetwork(nn.Module):
             masked_policy[policy_mask] += 1.
 
         return state_tensor, policy, masked_policy / masked_policy.sum()
+
+    @staticmethod
+    def get_config_path(directory_path: str) -> str:
+        """Return configuration path given a target directory."""
+        return os.path.join(directory_path, 'config.json')
+
+    @staticmethod
+    def get_model_path(directory_path: str) -> str:
+        """Return model parameters path given a target directory."""
+        return os.path.join(directory_path, 'model.pt')
+
+    def save(self, directory_path: str):
+        """Save model configuration and parameters.
+
+        Can be loaded back with :meth:`load`.
+        """
+        os.makedirs(directory_path, exist_ok=True)
+
+        # Save config (extract a dedicated method?)
+        config = {'board_size': self.board_size,
+                  'first_hidden_size': self.first_hidden_size,
+                  'num_hidden_layers': self.num_hidden_layers,
+                  'num_players': self.num_players}
+        with open(self.get_config_path(directory_path), 'w') as file:
+            json.dump(config, file)
+
+        # Save parameters
+        torch.save(self.state_dict(), self.get_model_path(directory_path))
+
+    @classmethod
+    def load(cls, directory_path: str) -> 'PolicyNetwork':
+        """Load model configuration and parameters.
+
+        Previously saved via :meth:`save`.
+        """
+        # Load config (extract a dedicated method?)
+        with open(cls.get_config_path(directory_path)) as file:
+            config = json.load(file)
+
+        network = cls(**config)
+        network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
+
+        return network
 
 
 def greedy_sample_action(state: Corso,
