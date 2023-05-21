@@ -78,19 +78,39 @@ class PolicyNetwork(nn.Module):
     """
 
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
+                 first_hidden_size: int = 64,
+                 num_hidden_layers: int = 2,
                  player_num=DEFAULT_PLAYER_NUM):
         super().__init__()
 
+        self.first_hidden_size = first_hidden_size
+        self.num_hidden_layers = num_hidden_layers
+
         board_w, board_h = board_size
-        self.dense1 = nn.Linear(board_w * board_h * player_num * 2 + 1, 32)
-        self.dense2 = nn.Linear(32, 16)
-        self.output = nn.Linear(16, board_w * board_h)
+        self.board_w = board_w
+        self.board_h = board_h
+
+        # W * H * players * 2 + 1 is the input size
+        # If the number of hidden layers is 0, fall back to this
+        # dimentions.
+        hidden_output_size = board_w * board_h * player_num * 2 + 1
+
+        layers = []
+        for i in range(num_hidden_layers):
+            internal_hidden_size = first_hidden_size // 2 ** i
+            layers.append(nn.Linear(hidden_output_size,
+                                    first_hidden_size // 2 ** i))
+            hidden_output_size = internal_hidden_size
+
+        # Output is a policy of size board_w * board_h
+        self.output = nn.Linear(hidden_output_size, board_w * board_h)
+
+        self.layers = nn.ModuleList(layers)
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
-        # batch = batch.flatten(1)
-        batch = F.relu(self.dense1(batch))
-        batch = F.relu(self.dense2(batch))
+        for layer in self.layers:
+            batch = F.relu(layer(batch))
 
         return F.log_softmax(self.output(batch), dim=1)
 
@@ -148,9 +168,9 @@ def sample_action(state: Corso,
 
 
 def reinforce(episodes=1000, discount=0.9,
-              starting_state: Corso = Corso(BOARD3X3)):
+              starting_state: Corso = Corso()):
     """ """
-    policy_net = PolicyNetwork((3, 3))
+    policy_net = PolicyNetwork((starting_state.width, starting_state.height))
     optimizer = optim.Adam(policy_net.parameters(), 0.001)
 
     loss_history = deque()
