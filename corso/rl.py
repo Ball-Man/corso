@@ -213,10 +213,9 @@ def sample_action(state: Corso,
     return action_index, Action(state.player_index, row, column)
 
 
-def reinforce(episodes=1000, discount=0.9,
+def reinforce(policy_net, episodes=1000, discount=0.9,
               starting_state: Corso = Corso()):
     """ """
-    policy_net = PolicyNetwork((starting_state.width, starting_state.height))
     optimizer = optim.Adam(policy_net.parameters(), 0.001)
 
     loss_history = deque()
