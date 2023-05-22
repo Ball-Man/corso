@@ -102,7 +102,7 @@ class PolicyNetwork(nn.Module):
         for i in range(num_hidden_layers):
             internal_hidden_size = first_hidden_size // 2 ** i
             layers.append(nn.Linear(hidden_output_size,
-                                    first_hidden_size // 2 ** i))
+                                    internal_hidden_size))
             hidden_output_size = internal_hidden_size
 
         # Output is a policy of size board_w * board_h
