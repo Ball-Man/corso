@@ -1,4 +1,6 @@
-from corso.model import Corso, Board, Action
+from itertools import cycle
+
+from corso.model import Corso, Board, Action, Player
 
 MARBLES = ['O', 'A', 'B']
 CELLS = ['O', 'a', 'b']
@@ -62,13 +64,26 @@ def get_action(state: Corso) -> Action:
         print('Invalid move')
 
 
-def cli_game():
-    state = Corso()
+class CLIPlayer(Player):
+    """CLI player that reads stdin."""
+
+    def select_action(self, state: Corso) -> Action:
+        """Select action based on stdin."""
+        return get_action(state)
+
+
+def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
+             starting_state: Corso = Corso()):
+    state = starting_state
+
+    players = cycle((player1, player2))
 
     while not state.terminal[0]:
+        player = next(players)
+
         print('Player', state.player_index)
         print_board(state.board)
-        state = state.step(get_action(state))
+        state = state.step(player.select_action(state))
 
     print_board(state.board)
     print(state.terminal)
