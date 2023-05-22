@@ -191,6 +191,90 @@ class PolicyNetwork(nn.Module):
         return network
 
 
+class ValueFunctionNetwork(nn.Module):
+    """State value approximation function."""
+
+    def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
+                 first_hidden_size: int = 64,
+                 num_hidden_layers: int = 2,
+                 num_players=DEFAULT_PLAYER_NUM):
+        super().__init__()
+
+        self.first_hidden_size = first_hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_players = num_players
+
+        board_w, board_h = board_size
+        self.board_size = board_size
+
+        # W * H * players * 2 + 1 is the input size
+        # If the number of hidden layers is 0, fall back to this
+        # dimentions.
+        hidden_output_size = board_w * board_h * num_players * 2 + 1
+
+        layers = []
+        for i in range(num_hidden_layers):
+            internal_hidden_size = first_hidden_size // 2 ** i
+            layers.append(nn.Linear(hidden_output_size,
+                                    internal_hidden_size))
+            hidden_output_size = internal_hidden_size
+
+        # Output is a policy of size board_w * board_h
+        self.output = nn.Linear(hidden_output_size, 1)
+
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        """Forward pass."""
+        for layer in self.layers:
+            batch = F.relu(layer(batch))
+
+        return F.tanh(self.output(batch))
+
+    @staticmethod
+    def get_config_path(directory_path: str) -> str:
+        """Return configuration path given a target directory."""
+        return os.path.join(directory_path, 'config.json')
+
+    @staticmethod
+    def get_model_path(directory_path: str) -> str:
+        """Return model parameters path given a target directory."""
+        return os.path.join(directory_path, 'model.pt')
+
+    def save(self, directory_path: str):
+        """Save model configuration and parameters.
+
+        Can be loaded back with :meth:`load`.
+        """
+        os.makedirs(directory_path, exist_ok=True)
+
+        # Save config (extract a dedicated method?)
+        config = {'board_size': self.board_size,
+                  'first_hidden_size': self.first_hidden_size,
+                  'num_hidden_layers': self.num_hidden_layers,
+                  'num_players': self.num_players}
+        with open(self.get_config_path(directory_path), 'w') as file:
+            json.dump(config, file)
+
+        # Save parameters
+        torch.save(self.state_dict(), self.get_model_path(directory_path))
+
+    @classmethod
+    def load(cls, directory_path: str) -> 'PolicyNetwork':
+        """Load model configuration and parameters.
+
+        Previously saved via :meth:`save`.
+        """
+        # Load config (extract a dedicated method?)
+        with open(cls.get_config_path(directory_path)) as file:
+            config = json.load(file)
+
+        network = cls(**config)
+        network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
+
+        return network
+
+
 def greedy_sample_action(state: Corso,
                          action_policy: torch.Tensor) -> tuple[int, Action]:
     """Given an action policy, return best scoring action."""
@@ -216,7 +300,13 @@ def sample_action(state: Corso,
 def reinforce(policy_net, episodes=1000, discount=0.9,
               starting_state: Corso = Corso()):
     """ """
-    optimizer = optim.Adam(policy_net.parameters(), 0.001)
+    optimizer = optim.Adam(policy_net.parameters(), 0.0001)
+
+    value_net = ValueFunctionNetwork((starting_state.width,
+                                      starting_state.height))
+    value_optimizer = optim.Adam(value_net.parameters(), 0.0001)
+    policy_lr_scheduler = optim.lr_scheduler.LinearLR(optimizer, 1, 0.1,
+                                                      total_iters=5000)
 
     loss_history = deque()
     evaluation_history = deque()
@@ -224,8 +314,11 @@ def reinforce(policy_net, episodes=1000, discount=0.9,
     bernoulli = torch.distributions.Bernoulli(0.5)
 
     for episode in range(episodes):            # Episodes
-        optimizer.zero_grad()
         policy_net.train()
+        optimizer.zero_grad()
+
+        value_net.train()
+        value_optimizer.zero_grad()
 
         state_tensors = deque()
         action_indeces = deque()
@@ -293,12 +386,23 @@ def reinforce(policy_net, episodes=1000, discount=0.9,
         probabilities_batch = policies_batch[range(policies_batch.size(0)),
                                              action_indeces]
 
-        loss = (-cumulative_rewards * probabilities_batch).mean()
+        # Value function
+        values_batch = value_net(states_batch).squeeze()
+
+        value_loss = F.mse_loss(values_batch, cumulative_rewards)
+        value_loss.backward()
+        value_optimizer.step()
+
+        loss = (-(cumulative_rewards - values_batch.detach())
+                * probabilities_batch).mean()
         loss.backward()
         optimizer.step()
 
+        policy_lr_scheduler.step()
+
         loss_history.append(loss.item())
         print('Loss', loss.item())
+        print('Value loss', value_loss.item())
 
         # Evaluation
         if episode % 100 == 0:
@@ -373,11 +477,15 @@ def evaluate(player1: Player, player2: Player,
 class PolicyNetworkPlayer(Player):
     """Player whose policy is computed via :class:`PolicyNetwork`."""
 
-    def __init__(self, network: PolicyNetwork):
+    def __init__(self, network: PolicyNetwork, verbose=False):
         self.policy_network = network
+        self.verbose = verbose
 
     def select_action(self, state: Corso) -> Action:
         """ """
         with torch.no_grad():
             _, _, action_policy = self.policy_network.get_masked_policy(state)
+            if self.verbose:
+                print(action_policy.view(state.height, state.width))
+
             return greedy_sample_action(state, action_policy)[1]
