@@ -76,3 +76,25 @@ def minmax_score(state: Corso, heuristic=heuristic, depth=3,
     cache[reversed_cache_key] = score
 
     return score
+
+
+class MinMaxPlayer(Player):
+    """Player employing a minmax strategy at fixed depth."""
+
+    def __init__(self, depth=3, heuristic=heuristic):
+        self.depth = depth - 1
+        self.heuristic = heuristic
+
+    def select_action(self, state: Corso) -> Action:
+        """Run a minmax search and return best scoring action."""
+        actions = state.actions
+        scores = tuple(map(lambda s: minmax_score(s, self.heuristic,
+                                                  self.depth),
+                           (state.step(a) for a in actions)))
+
+        # Selection method is given by the current player
+        select = min
+        if state.player_index == 1:
+            select = max
+
+        return actions[scores.index(select(scores))]
