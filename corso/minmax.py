@@ -1,5 +1,5 @@
 """Simple minmax agent definition for the two players game of Corso."""
-from corso.model import Corso, CellState
+from corso.model import Corso, CellState, Player, Action
 
 TERMINAL_SCORE = 100000.
 P1_MARBLE_STATE = CellState(1, True)
@@ -31,8 +31,18 @@ def heuristic(state: Corso) -> float:
     return p1_marbles + 0.7 * p1_dyes - p2_marbles - 0.7 * p2_dyes
 
 
-def minmax_score(state: Corso, heuristic=heuristic, depth=3) -> float:
+def minmax_score(state: Corso, heuristic=heuristic, depth=3,
+                 alpha=-TERMINAL_SCORE, beta=TERMINAL_SCORE,
+                 cache=None) -> float:
     """Run a minmax search for a maximum given depth and a states score."""
+    # Exploit cache if present
+    if cache is None:
+        cache = {}
+
+    cache_key = (state.board, state.player_index)
+    if cache_key in cache:
+        return cache[cache_key]
+
     # Base case, return value computed by the heuristic
     if depth <= 0 or state.terminal[0]:
         return heuristic(state)
@@ -43,10 +53,26 @@ def minmax_score(state: Corso, heuristic=heuristic, depth=3) -> float:
         select = max
 
     # Compute scores of immediate states and retrieve the argmax/argmin
-    # TODO: compare to an iterative solution? This recursive one is
-    #       very slim and consequently good in terms of algorithmical
-    #       constants. However, how do the recusion stack/func call
-    #       management constants scale?
-    return select(
-        map(lambda a: minmax_score(state.step(a), heuristic, depth - 1),
-            state._iter_actions()))
+    score = None
+    for action in state._iter_actions():
+        action_score = minmax_score(state.step(action), heuristic, depth - 1,
+                                    alpha, beta, cache)
+
+        if score is None:
+            score = action_score
+        score = select(score, action_score)
+
+        if state.player_index == 1:
+            alpha = max(alpha, action_score)
+        else:
+            beta = min(beta, action_score)
+
+        if alpha >= beta:
+            break
+
+    # Update cache
+    reversed_cache_key = (tuple(reversed(state.board)), state.player_index)
+    cache[cache_key] = score
+    cache[reversed_cache_key] = score
+
+    return score
