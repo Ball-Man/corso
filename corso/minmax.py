@@ -1,4 +1,7 @@
 """Simple minmax agent definition for the two players game of Corso."""
+import random
+import numpy as np
+
 from corso.model import Corso, CellState, Player, Action
 
 TERMINAL_SCORE = 100000.
@@ -79,22 +82,52 @@ def minmax_score(state: Corso, heuristic=heuristic, depth=3,
 
 
 class MinMaxPlayer(Player):
-    """Player employing a minmax strategy at fixed depth."""
+    """Player employing a minmax strategy at fixed depth.
 
-    def __init__(self, depth=3, heuristic=heuristic):
+    The player uses heuristic scores computed from the minmax as a
+    policy, sampling the action based on the scores.
+
+    Temperature handles exploration: high temperatures morph the policy
+    towards a uniform distribution, lower temperatures morph the policy
+    towards an optimal choice. Due to the very high heuristic scores
+    assigned to winning positions (terminal states), unless the
+    temperature is extremely high the agent will always make a certainly
+    winning move if one is found, sampling uniformly between equally
+    winning moves. Similarly, it will never play a certainly losing
+    action if found.
+    """
+
+    def __init__(self, depth=3, heuristic=heuristic, temperature=1.,
+                 verbose=False):
         self.depth = depth - 1
         self.heuristic = heuristic
+        self.temperature = temperature
+        self.verbose = verbose
 
     def select_action(self, state: Corso) -> Action:
         """Run a minmax search and return best scoring action."""
         actions = state.actions
-        scores = tuple(map(lambda s: minmax_score(s, self.heuristic,
-                                                  self.depth),
-                           (state.step(a) for a in actions)))
+        scores = np.fromiter(
+            map(lambda s: minmax_score(s, self.heuristic,
+                                       self.depth),
+                (state.step(a) for a in actions)),
+            dtype=np.float32)
 
-        # Selection method is given by the current player
-        select = min
-        if state.player_index == 1:
-            select = max
+        # In case of a min player, maximize negative of the score
+        if state.player_index == 2:
+            scores = -scores
 
-        return actions[scores.index(select(scores))]
+        # Compute policy from minmax scores and sample
+        policy = softmax(scores / self.temperature)
+
+        if self.verbose:
+            print(tuple(zip(policy, actions)))
+
+        return random.choices(actions, policy)[0]
+
+
+def softmax(x: np.ndarray) -> np.ndarray:
+    """Stable softmax, decoupled from torch."""
+    shifted_x = x - x.max()
+    numerator = np.exp(shifted_x)
+    return numerator / numerator.sum()
