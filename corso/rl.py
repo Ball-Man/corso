@@ -1,7 +1,5 @@
 """Reinforcement learning approaches for the game."""
-import os
 import os.path
-import json
 import random
 import copy
 import datetime
@@ -17,6 +15,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 
+from corso.utils import SavableModule
 from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
@@ -87,7 +86,7 @@ def _action_indeces(width=DEFAULT_BOARD_SIZE,
     return tuple(range(width * height))
 
 
-class PolicyNetwork(nn.Module):
+class PolicyNetwork(nn.Module, SavableModule):
     """Game policy approximation network.
 
     Just some dense blocks.
@@ -163,50 +162,14 @@ class PolicyNetwork(nn.Module):
 
         return state_tensor, policy, masked_policy / masked_policy.sum()
 
-    @staticmethod
-    def get_config_path(directory_path: str) -> str:
-        """Return configuration path given a target directory."""
-        return os.path.join(directory_path, 'config.json')
-
-    @staticmethod
-    def get_model_path(directory_path: str) -> str:
-        """Return model parameters path given a target directory."""
-        return os.path.join(directory_path, 'model.pt')
-
-    def save(self, directory_path: str):
-        """Save model configuration and parameters.
-
-        Can be loaded back with :meth:`load`.
-        """
-        os.makedirs(directory_path, exist_ok=True)
-
-        # Save config (extract a dedicated method?)
-        config = {'board_size': self.board_size,
-                  'hidden_layers': self.hidden_layers,
-                  'num_players': self.num_players}
-        with open(self.get_config_path(directory_path), 'w') as file:
-            json.dump(config, file)
-
-        # Save parameters
-        torch.save(self.state_dict(), self.get_model_path(directory_path))
-
-    @classmethod
-    def load(cls, directory_path: str) -> 'PolicyNetwork':
-        """Load model configuration and parameters.
-
-        Previously saved via :meth:`save`.
-        """
-        # Load config (extract a dedicated method?)
-        with open(cls.get_config_path(directory_path)) as file:
-            config = json.load(file)
-
-        network = cls(**config)
-        network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
-
-        return network
+    def get_config(self) -> dict:
+        """Return a configuration dict: used to save/load the model."""
+        return {'board_size': self.board_size,
+                'hidden_layers': self.hidden_layers,
+                'num_players': self.num_players}
 
 
-class ValueFunctionNetwork(nn.Module):
+class ValueFunctionNetwork(nn.Module, SavableModule):
     """State value approximation function."""
 
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
@@ -249,47 +212,11 @@ class ValueFunctionNetwork(nn.Module):
 
         return F.tanh(self.output(batch))
 
-    @staticmethod
-    def get_config_path(directory_path: str) -> str:
-        """Return configuration path given a target directory."""
-        return os.path.join(directory_path, 'config.json')
-
-    @staticmethod
-    def get_model_path(directory_path: str) -> str:
-        """Return model parameters path given a target directory."""
-        return os.path.join(directory_path, 'model.pt')
-
-    def save(self, directory_path: str):
-        """Save model configuration and parameters.
-
-        Can be loaded back with :meth:`load`.
-        """
-        os.makedirs(directory_path, exist_ok=True)
-
-        # Save config (extract a dedicated method?)
-        config = {'board_size': self.board_size,
-                  'hidden_layers': self.hidden_layers,
-                  'num_players': self.num_players}
-        with open(self.get_config_path(directory_path), 'w') as file:
-            json.dump(config, file)
-
-        # Save parameters
-        torch.save(self.state_dict(), self.get_model_path(directory_path))
-
-    @classmethod
-    def load(cls, directory_path: str) -> 'PolicyNetwork':
-        """Load model configuration and parameters.
-
-        Previously saved via :meth:`save`.
-        """
-        # Load config (extract a dedicated method?)
-        with open(cls.get_config_path(directory_path)) as file:
-            config = json.load(file)
-
-        network = cls(**config)
-        network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
-
-        return network
+    def get_config(self) -> dict:
+        """Return a configuration dict: used to save/load the model."""
+        return {'board_size': self.board_size,
+                'hidden_layers': self.hidden_layers,
+                'num_players': self.num_players}
 
 
 def greedy_sample_action(state: Corso,
