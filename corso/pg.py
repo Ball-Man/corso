@@ -1,4 +1,4 @@
-"""Reinforcement learning approaches for the game."""
+"""Policy gradient approaches for the game."""
 import os.path
 import random
 import copy
