@@ -20,11 +20,6 @@ from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
 
-BOARD2X2 = ((EMPTY_CELL, EMPTY_CELL), (EMPTY_CELL, EMPTY_CELL))
-BOARD3X3 = ((EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
-            (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
-            (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL))
-
 bernoulli = torch.distributions.Bernoulli(0.0)
 
 

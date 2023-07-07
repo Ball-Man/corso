@@ -15,6 +15,12 @@ MutableBoard = Sequence[Sequence[CellState]]
 EMPTY_BOARD = tuple([tuple([EMPTY_CELL] * DEFAULT_BOARD_SIZE)]
                     * DEFAULT_BOARD_SIZE)
 
+# Some more common boards
+EMPTY_BOARD2X2 = ((EMPTY_CELL, EMPTY_CELL), (EMPTY_CELL, EMPTY_CELL))
+EMPTY_BOARD3X3 = ((EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
+                  (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
+                  (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL))
+
 
 class Terminal(enum.IntEnum):
     """Terminal states for a game."""
