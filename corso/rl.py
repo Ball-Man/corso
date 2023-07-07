@@ -3,23 +3,32 @@ import os
 import os.path
 import json
 import random
+import copy
+import datetime
 from functools import lru_cache
 from itertools import cycle
 from collections import deque
 from typing import Iterable
 
 import torch
+import numpy as np
 from torch import optim
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.tensorboard import SummaryWriter
 
-from corso.model import (Corso, CellState, Action, Player, RandomPlayer,
-                         DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM, EMPTY_CELL)
+from corso.model import (Corso, CellState, Action, Player,              # NOQA
+                         RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
+                         EMPTY_CELL)
 
 BOARD2X2 = ((EMPTY_CELL, EMPTY_CELL), (EMPTY_CELL, EMPTY_CELL))
 BOARD3X3 = ((EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
             (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
             (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL))
+
+writer = SummaryWriter(
+    os.path.join('tboard', datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
+bernoulli = torch.distributions.Bernoulli(0.0)
 
 
 @lru_cache()
@@ -59,8 +68,14 @@ def model_tensor(state: Corso) -> torch.Tensor:
 
     board_tensor = torch.Tensor(
         tuple(tuple(map(_one_hot_cell, row)) for row in state.board))
-    return torch.cat((board_tensor.flatten(),
-                      torch.Tensor((state.player_index - 1,))))
+
+    if state.player_index == 2:
+        board_tensor = board_tensor[:, :, [2, 3, 0, 1]]
+
+    return board_tensor.flatten()
+
+    # board_tensor = torch.transpose(board_tensor, 1, 2)
+    # return torch.transpose(board_tensor, 0, 1)
 
 
 @lru_cache()
@@ -81,14 +96,14 @@ class PolicyNetwork(nn.Module):
     """
 
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
-                 first_hidden_size: int = 64,
-                 num_hidden_layers: int = 2,
-                 num_players=DEFAULT_PLAYER_NUM):
+                 hidden_layers: Iterable[int] = (),
+                 num_players=DEFAULT_PLAYER_NUM,
+                 dropout=0.0):
         super().__init__()
 
-        self.first_hidden_size = first_hidden_size
-        self.num_hidden_layers = num_hidden_layers
+        self.hidden_layers = tuple(hidden_layers)
         self.num_players = num_players
+        self.dropout = dropout
 
         board_w, board_h = board_size
         self.board_size = board_size
@@ -96,14 +111,16 @@ class PolicyNetwork(nn.Module):
         # W * H * players * 2 + 1 is the input size
         # If the number of hidden layers is 0, fall back to this
         # dimentions.
-        hidden_output_size = board_w * board_h * num_players * 2 + 1
+        # hidden_output_size = board_w * board_h * 16
+        hidden_output_size = board_w * board_h * num_players * 2
 
         layers = []
-        for i in range(num_hidden_layers):
-            internal_hidden_size = first_hidden_size // 2 ** i
+
+        for hidden_layer_nodes in hidden_layers:
             layers.append(nn.Linear(hidden_output_size,
-                                    internal_hidden_size))
-            hidden_output_size = internal_hidden_size
+                                    hidden_layer_nodes))
+            layers.append(nn.ReLU())
+            hidden_output_size = hidden_layer_nodes
 
         # Output is a policy of size board_w * board_h
         self.output = nn.Linear(hidden_output_size, board_w * board_h)
@@ -113,7 +130,8 @@ class PolicyNetwork(nn.Module):
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         for layer in self.layers:
-            batch = F.relu(layer(batch))
+            batch = layer(batch)
+            batch = F.dropout(batch, self.dropout, self.training)
 
         return F.log_softmax(self.output(batch), dim=1)
 
@@ -166,8 +184,7 @@ class PolicyNetwork(nn.Module):
 
         # Save config (extract a dedicated method?)
         config = {'board_size': self.board_size,
-                  'first_hidden_size': self.first_hidden_size,
-                  'num_hidden_layers': self.num_hidden_layers,
+                  'hidden_layers': self.hidden_layers,
                   'num_players': self.num_players}
         with open(self.get_config_path(directory_path), 'w') as file:
             json.dump(config, file)
@@ -195,14 +212,14 @@ class ValueFunctionNetwork(nn.Module):
     """State value approximation function."""
 
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
-                 first_hidden_size: int = 64,
-                 num_hidden_layers: int = 2,
-                 num_players=DEFAULT_PLAYER_NUM):
+                 hidden_layers: Iterable[int] = (),
+                 num_players=DEFAULT_PLAYER_NUM,
+                 dropout=0.0):
         super().__init__()
 
-        self.first_hidden_size = first_hidden_size
-        self.num_hidden_layers = num_hidden_layers
+        self.hidden_layers = tuple(hidden_layers)
         self.num_players = num_players
+        self.dropout = dropout
 
         board_w, board_h = board_size
         self.board_size = board_size
@@ -210,16 +227,18 @@ class ValueFunctionNetwork(nn.Module):
         # W * H * players * 2 + 1 is the input size
         # If the number of hidden layers is 0, fall back to this
         # dimentions.
-        hidden_output_size = board_w * board_h * num_players * 2 + 1
+        # hidden_output_size = board_w * board_h * 16
+        hidden_output_size = board_w * board_h * num_players * 2
 
         layers = []
-        for i in range(num_hidden_layers):
-            internal_hidden_size = first_hidden_size // 2 ** i
-            layers.append(nn.Linear(hidden_output_size,
-                                    internal_hidden_size))
-            hidden_output_size = internal_hidden_size
 
-        # Output is a policy of size board_w * board_h
+        for hidden_layer_nodes in hidden_layers:
+            layers.append(nn.Linear(hidden_output_size,
+                                    hidden_layer_nodes))
+            layers.append(nn.ReLU())
+            hidden_output_size = hidden_layer_nodes
+
+        # Output is a scalar, the state value
         self.output = nn.Linear(hidden_output_size, 1)
 
         self.layers = nn.ModuleList(layers)
@@ -227,7 +246,8 @@ class ValueFunctionNetwork(nn.Module):
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         for layer in self.layers:
-            batch = F.relu(layer(batch))
+            batch = layer(batch)
+            batch = F.dropout(batch, self.dropout, self.training)
 
         return F.tanh(self.output(batch))
 
@@ -250,8 +270,7 @@ class ValueFunctionNetwork(nn.Module):
 
         # Save config (extract a dedicated method?)
         config = {'board_size': self.board_size,
-                  'first_hidden_size': self.first_hidden_size,
-                  'num_hidden_layers': self.num_hidden_layers,
+                  'hidden_layers': self.hidden_layers,
                   'num_players': self.num_players}
         with open(self.get_config_path(directory_path), 'w') as file:
             json.dump(config, file)
@@ -297,23 +316,91 @@ def sample_action(state: Corso,
     return action_index, Action(state.player_index, row, column)
 
 
-def reinforce(policy_net, episodes=1000, discount=0.9,
+def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
+            discount=0.9) -> tuple[deque[torch.tensor], deque[int],
+                                   list[float]]:
+    """Play a full episode and return trajectory information.
+
+    In order:
+
+    - A deque of state tensors
+    - A deque of action indeces
+    - A list of returns (cumulative rewards per state)
+    """
+    state_tensors = deque()
+    action_indeces = deque()
+    winner = 1
+
+    state = starting_state
+    agent_is_second_player = bernoulli.sample()
+    if agent_is_second_player:
+        state = state.step(opponent.select_action(state))
+
+    # Iterations: max number of moves in a game of corso is w * h
+    # as the longest game would see each player placing a marble
+    # without expanding.
+    for _ in range(state.width * state.height + 1):
+        with torch.no_grad():
+            # Retrieve policy from network, mask illegal moves and sample
+            state_tensor, logprobs, action_policy = \
+                policy_net.get_masked_policy(state)
+            action_index, action = sample_action(state, action_policy)
+
+        state_tensors.append(state_tensor)
+        action_indeces.append(action_index)
+
+        if action not in state.actions:
+            raise ValueError(f'Action {action} is not legal.')
+
+        # Execute action and opponent's action
+        state = state.step(action)
+        terminal, winner = state.terminal
+        if terminal:
+            break
+
+        state = state.step(opponent.select_action(state))
+        terminal, winner = state.terminal
+        if terminal:
+            break
+
+    # Assign rewards based on episode result (winner)
+    rewards = torch.zeros((len(state_tensors),))
+
+    # Assign reward
+    if winner == 1:
+        rewards[-1] = 1
+    else:
+        rewards[-1] = -1
+
+    if agent_is_second_player:
+        rewards[-1] *= -1
+
+    # Account for draws
+    # if winner == 0:
+    #     rewards[-1] = 0.5
+
+    # Cumulative rewards
+    cumulative_rewards = [0] * len(rewards)
+    cumulative_rewards[-1] = rewards[-1]
+
+    for i in reversed(range(0, len(cumulative_rewards) - 1)):
+        cumulative_rewards[i] = (discount * cumulative_rewards[i + 1]
+                                 + rewards[i])
+
+    return state_tensors, action_indeces, cumulative_rewards
+
+
+def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
+              discount=0.9, evaluation_after=1, save_curriculum_after=1,
               starting_state: Corso = Corso()):
     """ """
     optimizer = optim.Adam(policy_net.parameters(), 0.0001)
+    value_optimizer = optim.Adam(value_net.parameters(), 0.001)
 
-    value_net = ValueFunctionNetwork((starting_state.width,
-                                      starting_state.height))
-    value_optimizer = optim.Adam(value_net.parameters(), 0.0001)
-    policy_lr_scheduler = optim.lr_scheduler.LinearLR(optimizer, 1, 0.1,
-                                                      total_iters=5000)
+    curriculum = deque([RandomPlayer()], maxlen=20)
 
-    loss_history = deque()
-    evaluation_history = deque()
-
-    bernoulli = torch.distributions.Bernoulli(0.5)
-
-    for episode in range(episodes):            # Episodes
+    # Epochs
+    for global_episode_index in range(0, episodes, episodes_per_epoch):
         policy_net.train()
         optimizer.zero_grad()
 
@@ -322,131 +409,131 @@ def reinforce(policy_net, episodes=1000, discount=0.9,
 
         state_tensors = deque()
         action_indeces = deque()
-        winner = 1
+        cumulative_rewards = []
 
-        state = starting_state
-        # Iterations: max number of moves in a game of corso is w * h
-        # as the longest game would see each player placing a marble
-        # without expanding.
-        for _ in range(state.width * state.height):
-            with torch.no_grad():
-                # Retrieve policy from network, mask illegal moves and sample
-                state_tensor, logprobs, action_policy = \
-                    policy_net.get_masked_policy(state)
-                action_index, action = sample_action(state, action_policy)
+        # Episodes
+        opponent = random.choice(curriculum)
+        episodes_returns = 0
+        for episode_index in range(episodes_per_epoch):
+            ep_state_tensors, ep_action_indeces, ep_cumulative_rewards = \
+                episode(policy_net, opponent, starting_state,
+                        discount)
 
-            state_tensors.append(state_tensor)
-            action_indeces.append(action_index)
+            episodes_returns += ep_cumulative_rewards[-1]
 
-            if action not in state.actions:
-                raise ValueError(f'Action {action} is not legal.')
+            state_tensors += ep_state_tensors
+            action_indeces += ep_action_indeces
+            cumulative_rewards += ep_cumulative_rewards
 
-            state = state.step(action)
-            terminal, winner = state.terminal
-            if terminal:
-                print(f'Ending episode {episode + 1}')
-                # result = winner - 1
-                break
+        writer.add_scalar('train/average_return',
+                          episodes_returns / episodes_per_epoch,
+                          global_episode_index)
 
-        # Assign rewards based on episode result (winner)
-        rewards = torch.zeros((len(state_tensors),))
-
-        # The game could finish in an odd number of moves, adjust
-        # rewards based on this and on the winner
-        if len(rewards) % 2 == 0:
-            rewards[-(3 - winner)] = 1
-        else:
-            rewards[-winner] = 1
-
-        # Account for draws
-        # if winner == 0:
-        #     rewards[-2:] = torch.tensor([0.5, 0.5])
-
-        # Cumulative rewards
-        cumulative_rewards = torch.zeros_like(rewards)
-        cumulative_rewards[-2:] = rewards[-2:]      # Prevent 0 reward
-
-        for i in reversed(range(0, len(cumulative_rewards) - 2)):
-            # Pick rewards by skipping one action, so that the winner
-            # and the loser actions can have separate counts
-            cumulative_rewards[i] = (discount * cumulative_rewards[i + 2]
-                                     + rewards[i])
+        cumulative_rewards_tensor = torch.tensor(cumulative_rewards)
 
         # Recompute policy on the sequence of states and optimize.
         # Recomputation is a potential slowdown w.r.t. using directly
         # the scores computed during training, but allows for data
         # augmentation.
-        inversion_map = bernoulli.sample((len(state_tensors),)).bool()
+        # inversion_map = bernoulli.sample((len(state_tensors),)).bool()
         states_batch = torch.stack(tuple(state_tensors))
-        inverted_states = augmentation_inversion(states_batch[inversion_map],
-                                                 action_indeces, state.width,
-                                                 state.height)
-        states_batch[inversion_map] = inverted_states
+        # inverted_states = augmentation_inversion(states_batch[inversion_map],
+        #                                          action_indeces, state.width,
+        #                                          state.height)
+        # states_batch[inversion_map] = inverted_states
+
+        assert states_batch.shape[0] == cumulative_rewards_tensor.shape[0]
+        action_indeces = np.array(action_indeces)
+
         policies_batch = policy_net(states_batch)
-        probabilities_batch = policies_batch[range(policies_batch.size(0)),
-                                             action_indeces]
+        entropy = -(policies_batch * policies_batch.exp()).sum(1)
+
+        probabilities_batch = policies_batch[:, action_indeces]
 
         # Value function
         values_batch = value_net(states_batch).squeeze()
 
-        value_loss = F.mse_loss(values_batch, cumulative_rewards)
+        value_loss = F.mse_loss(values_batch, cumulative_rewards_tensor)
         value_loss.backward()
         value_optimizer.step()
 
-        loss = (-(cumulative_rewards - values_batch.detach())
-                * probabilities_batch).mean()
+        with torch.no_grad():
+            values_estimates = value_net(states_batch).squeeze()
+
+        loss = (-(cumulative_rewards_tensor - values_estimates)
+                * probabilities_batch - 0.01 * entropy).mean()
+
         loss.backward()
         optimizer.step()
 
-        policy_lr_scheduler.step()
+        writer.add_scalar('train/entropy', entropy.mean(),
+                          global_episode_index)
+        writer.add_scalar('train/value_loss', value_loss, global_episode_index)
+        writer.add_scalar('train/policy_loss', loss, global_episode_index)
 
-        loss_history.append(loss.item())
         print('Loss', loss.item())
         print('Value loss', value_loss.item())
 
         # Evaluation
-        if episode % 100 == 0:
+        epoch, local_episode = divmod(global_episode_index, episodes_per_epoch)
+        if local_episode == 0 and (epoch + 1) % evaluation_after == 0:
             policy_net.eval()
 
             evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
                                           RandomPlayer(),
                                           starting_state=starting_state,
                                           n_games=100)
-            evaluation_history.append(evaluation_results)
+            writer.add_scalar('eval/p1_wins_v_random', evaluation_results[1],
+                              global_episode_index)
+
+            evaluation_results_2 = evaluate(RandomPlayer(),
+                                            PolicyNetworkPlayer(policy_net),
+                                            starting_state=starting_state,
+                                            n_games=100)
+            writer.add_scalar('eval/p2_wins_v_random', evaluation_results_2[2],
+                              global_episode_index)
+
             print('Evaluation results', evaluation_results)
+            print('Inverse evaluation', evaluation_results_2)
 
-    return loss_history, evaluation_history
+        # Add current agent to curriculum
+        if local_episode == 0 and (epoch + 1) % save_curriculum_after == 0:
+            policy_net_copy = copy.deepcopy(policy_net)
+            policy_net_copy.eval()
+            curriculum.append(
+                PolicyNetworkPlayer(policy_net_copy,
+                                    sampling_function=sample_action))
 
 
-def augmentation_inversion(state_tensors: torch.Tensor,
-                           action_indeces: Iterable[int],
-                           state_width: int,
-                           state_height: int) -> torch.Tensor:
-    """Invert player cells in the given tensors (all of them).
+# def augmentation_inversion(state_tensors: torch.Tensor,
+#                            action_indeces: Iterable[int],
+#                            state_width: int,
+#                            state_height: int) -> torch.Tensor:
+#     """Invert player cells in the given tensors (all of them).
 
-    ``state_tensors`` is expected to be a stack of state tensors
-    (obtained through :func:`model_tensor`). The stack dimension must
-    be 0 (default behaviour of ``torch.stack``), similarly to a batch.
+#     ``state_tensors`` is expected to be a stack of state tensors
+#     (obtained through :func:`model_tensor`). The stack dimension must
+#     be 0 (default behaviour of ``torch.stack``), similarly to a batch.
 
-    ``action_indeces`` shall be a collection of the indeces of the
-    actions executed for each given state in ```state_tensors` during
-    episode self-play. Some augmentation techniques (e.g. rotation)
-    may require manipulation of the action index to achieve invariance.
-    It is unused when applying inversion.
-    """
-    # Last value is the player index
-    # Dimensions: batch, height, width, cell binary vector (4)
-    planes = state_tensors[:, :-1].view(-1, state_height, state_width, 4)
+#     ``action_indeces`` shall be a collection of the indeces of the
+#     actions executed for each given state in ```state_tensors` during
+#     episode self-play. Some augmentation techniques (e.g. rotation)
+#     may require manipulation of the action index to achieve invariance.
+#     It is unused when applying inversion.
+#     """
+#     # Last value is the player index
+#     # Dimensions: batch, height, width, cell binary vector (4)
+#     planes = state_tensors[:, :-1].view(-1, state_height, state_width, 4)
 
-    # Invert player planes by swapping the first two values in each
-    # binary vector with the last two
-    planes = planes[:, :, :, [2, 3, 0, 1]]
+#     # Invert player planes by swapping the first two values in each
+#     # binary vector with the last two
+#     planes = planes[:, :, :, [2, 3, 0, 1]]
 
-    # A new tensor has to be allocated in order to attach the current
-    # player's.
-    return torch.cat((planes.flatten(start_dim=1),
-                      1 - state_tensors[:, -1].unsqueeze(1)),
-                     dim=1)
+#     # A new tensor has to be allocated in order to attach the current
+#     # player's.
+#     return torch.cat((planes.flatten(start_dim=1),
+#                       1 - state_tensors[:, -1].unsqueeze(1)),
+#                      dim=1)
 
 
 def evaluate(player1: Player, player2: Player,
@@ -477,9 +564,11 @@ def evaluate(player1: Player, player2: Player,
 class PolicyNetworkPlayer(Player):
     """Player whose policy is computed via :class:`PolicyNetwork`."""
 
-    def __init__(self, network: PolicyNetwork, verbose=False):
+    def __init__(self, network: PolicyNetwork, verbose=False,
+                 sampling_function=greedy_sample_action):
         self.policy_network = network
         self.verbose = verbose
+        self.sampling_function = sampling_function
 
     def select_action(self, state: Corso) -> Action:
         """ """
@@ -488,4 +577,4 @@ class PolicyNetworkPlayer(Player):
             if self.verbose:
                 print(action_policy.view(state.height, state.width))
 
-            return greedy_sample_action(state, action_policy)[1]
+            return self.sampling_function(state, action_policy)[1]
