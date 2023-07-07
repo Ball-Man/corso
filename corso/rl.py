@@ -8,7 +8,7 @@ import datetime
 from functools import lru_cache
 from itertools import cycle
 from collections import deque
-from typing import Iterable
+from typing import Iterable, Optional
 
 import torch
 import numpy as np
@@ -26,8 +26,6 @@ BOARD3X3 = ((EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
             (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL),
             (EMPTY_CELL, EMPTY_CELL, EMPTY_CELL))
 
-writer = SummaryWriter(
-    os.path.join('tboard', datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
 bernoulli = torch.distributions.Bernoulli(0.0)
 
 
@@ -392,8 +390,15 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
 
 def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
               discount=0.9, evaluation_after=1, save_curriculum_after=1,
-              starting_state: Corso = Corso()):
+              starting_state: Corso = Corso(),
+              writer: Optional[SummaryWriter] = None):
     """ """
+    # Build a default writer if not provided
+    if writer is None:
+        writer = SummaryWriter(
+            os.path.join('runs',
+                         datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
+
     optimizer = optim.Adam(policy_net.parameters(), 0.0001)
     value_optimizer = optim.Adam(value_net.parameters(), 0.001)
 
