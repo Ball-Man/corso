@@ -461,7 +461,7 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
             values_estimates = value_net(states_batch).squeeze()
 
         loss = (-(cumulative_rewards_tensor - values_estimates)
-                * probabilities_batch - 0.01 * entropy).mean()
+                * probabilities_batch - 0.05 * entropy).mean()
 
         loss.backward()
         optimizer.step()
@@ -470,9 +470,6 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
                           global_episode_index)
         writer.add_scalar('train/value_loss', value_loss, global_episode_index)
         writer.add_scalar('train/policy_loss', loss, global_episode_index)
-
-        print('Loss', loss.item())
-        print('Value loss', value_loss.item())
 
         # Evaluation
         epoch, local_episode = divmod(global_episode_index, episodes_per_epoch)
@@ -492,9 +489,6 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
                                             n_games=100)
             writer.add_scalar('eval/p2_wins_v_random', evaluation_results_2[2],
                               global_episode_index)
-
-            print('Evaluation results', evaluation_results)
-            print('Inverse evaluation', evaluation_results_2)
 
         # Add current agent to curriculum
         if local_episode == 0 and (epoch + 1) % save_curriculum_after == 0:
