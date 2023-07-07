@@ -311,7 +311,8 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
 
 
 def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
-              discount=0.9, evaluation_after=1, save_curriculum_after=1,
+              discount=0.9, entropy_coefficient=0.05,
+              evaluation_after=1, save_curriculum_after=1,
               starting_state: Corso = Corso(),
               writer: Optional[SummaryWriter] = None):
     """ """
@@ -388,7 +389,7 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
             values_estimates = value_net(states_batch).squeeze()
 
         loss = (-(cumulative_rewards_tensor - values_estimates)
-                * probabilities_batch - 0.05 * entropy).mean()
+                * probabilities_batch - entropy_coefficient * entropy).mean()
 
         loss.backward()
         optimizer.step()
