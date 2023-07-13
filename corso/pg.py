@@ -4,9 +4,8 @@ import random
 import copy
 import datetime
 from functools import lru_cache
-from itertools import cycle
 from collections import deque
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 import torch
 import numpy as np
@@ -16,11 +15,12 @@ from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from corso.utils import SavableModule
+from corso.evaluation import AgentEvaluationStrategy
 from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
 
-bernoulli = torch.distributions.Bernoulli(0.0)
+bernoulli = torch.distributions.Bernoulli(0.5)
 
 
 @lru_cache()
@@ -314,6 +314,7 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
               discount=0.9, entropy_coefficient=0.05,
               evaluation_after=1, save_curriculum_after=1,
               starting_state: Corso = Corso(),
+              evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
               writer: Optional[SummaryWriter] = None):
     """ """
     # Build a default writer if not provided
@@ -401,22 +402,18 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
 
         # Evaluation
         epoch, local_episode = divmod(global_episode_index, episodes_per_epoch)
-        if local_episode == 0 and (epoch + 1) % evaluation_after == 0:
+        if local_episode == 0 and ((epoch + 1) % evaluation_after == 0
+                                   or epoch == 0):
             policy_net.eval()
+            policy_player = PolicyNetworkPlayer(policy_net)
 
-            evaluation_results = evaluate(PolicyNetworkPlayer(policy_net),
-                                          RandomPlayer(),
-                                          starting_state=starting_state,
-                                          n_games=100)
-            writer.add_scalar('eval/p1_wins_v_random', evaluation_results[1],
-                              global_episode_index)
+            for evaluation_stragety in evaluation_strageties:
+                evaluation_results = evaluation_stragety.evaluate(
+                    policy_player, starting_state=starting_state)
 
-            evaluation_results_2 = evaluate(RandomPlayer(),
-                                            PolicyNetworkPlayer(policy_net),
-                                            starting_state=starting_state,
-                                            n_games=100)
-            writer.add_scalar('eval/p2_wins_v_random', evaluation_results_2[2],
-                              global_episode_index)
+                writer.add_scalars(f'eval/{evaluation_stragety.get_name()}',
+                                   evaluation_results._asdict(),
+                                   global_episode_index)
 
         # Add current agent to curriculum
         if local_episode == 0 and (epoch + 1) % save_curriculum_after == 0:
@@ -456,31 +453,6 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
 #     return torch.cat((planes.flatten(start_dim=1),
 #                       1 - state_tensors[:, -1].unsqueeze(1)),
 #                      dim=1)
-
-
-def evaluate(player1: Player, player2: Player,
-             starting_state=Corso(),
-             n_games=1) -> tuple[int, int, int]:
-    """Play automated games and return the results.
-
-    The returned tuple is in the form (draw, p1 wins, p2 wins).
-    """
-    results = [0, 0, 0]
-
-    for _ in range(n_games):
-        state = starting_state
-        players = cycle((player1, player2))
-
-        terminal, winner = state.terminal
-        while not terminal:
-            player = next(players)
-            state = state.step(player.select_action(state))
-
-            terminal, winner = state.terminal
-
-        results[winner] += 1
-
-    return tuple(results)
 
 
 class PolicyNetworkPlayer(Player):
