@@ -236,16 +236,19 @@ def sample_action(state: Corso,
 
 def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
             discount=0.9, player2_sampler=torch.distributions.Bernoulli(0.5)
-            ) -> tuple[deque[torch.tensor], deque[int], list[float]]:
+            ) -> tuple[deque[torch.tensor], deque[torch.Tensor],
+                       deque[int], list[float]]:
     """Play a full episode and return trajectory information.
 
     In order:
 
     - A deque of state tensors
+    - A deque of predicted log policies for each state
     - A deque of action indeces
     - A list of returns (cumulative rewards per state)
     """
     state_tensors = deque()
+    logpolicies = deque()
     action_indeces = deque()
     winner = 1
 
@@ -265,6 +268,7 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
             action_index, action = sample_action(state, action_policy)
 
         state_tensors.append(state_tensor)
+        logpolicies.append(logprobs)
         action_indeces.append(action_index)
 
         if action not in state.actions:
@@ -305,18 +309,53 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
         cumulative_rewards[i] = (discount * cumulative_rewards[i + 1]
                                  + rewards[i])
 
-    return state_tensors, action_indeces, cumulative_rewards
+    return state_tensors, logpolicies, action_indeces, cumulative_rewards
 
 
-def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
-              discount=0.9, entropy_coefficient=0.05,
-              evaluation_after=1, save_curriculum_after=1,
-              curriculum_size=None,
-              policy_lr=1e-3, value_function_lr=1e-3,
-              player2_probability=0.5,
-              starting_state: Corso = Corso(),
-              evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
-              writer: Optional[SummaryWriter] = None):
+def reinforce(
+    policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
+    action_indeces: np.ndarray, advantage: torch.Tensor,
+    policy_optimizer: torch.optim.Optimizer,
+        entropy_coefficient: float) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Compute a reinforce update, given policy and advantage.
+
+    In particular, the reinforce update is computed by gradient descent
+    of the following loss:
+    :math:`-\log(\pi(a_t|s_t)) A(s_t, a_t)`
+    where :math:`A` is the advantage function. The advantage must be
+    precomputed and passed as parameter.
+
+    ``logpolicies`` is expected to be the tensor of log predictions
+    obtained during data collection. It is unused in this function.
+
+    Mean policy loss and mean entropy are returned.
+    """
+    policy_optimizer.zero_grad()
+
+    policies_batch = policy_net(states)
+    entropy = -(policies_batch * policies_batch.exp()).sum(1)
+
+    probabilities_batch = policies_batch[:, action_indeces]
+
+    loss = (-probabilities_batch * advantage
+            - entropy_coefficient * entropy).mean()
+
+    loss.backward()
+    policy_optimizer.step()
+
+    return loss, entropy.mean()
+
+
+def policy_gradient(
+    policy_net, value_net, episodes=1000, episodes_per_epoch=64,
+    discount=0.9, policy_update_function=reinforce, entropy_coefficient=0.05,
+    evaluation_after=1, save_curriculum_after=1,
+    curriculum_size=None,
+    policy_lr=1e-3, value_function_lr=1e-3,
+    player2_probability=0.5,
+    starting_state: Corso = Corso(),
+    evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
+        writer: Optional[SummaryWriter] = None):
     """ """
     # Build a default writer if not provided
     if writer is None:
@@ -340,6 +379,7 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
         value_optimizer.zero_grad()
 
         state_tensors = deque()
+        logpolicies = deque()
         action_indeces = deque()
         cumulative_rewards = []
 
@@ -347,13 +387,15 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
         opponent = random.choice(curriculum)
         episodes_returns = 0
         for episode_index in range(episodes_per_epoch):
-            ep_state_tensors, ep_action_indeces, ep_cumulative_rewards = \
+            (ep_state_tensors, ep_logpolicies, ep_action_indeces,
+             ep_cumulative_rewards) = \
                 episode(policy_net, opponent, starting_state,
                         discount, player2_sampler=player2_sampler)
 
             episodes_returns += ep_cumulative_rewards[-1]
 
             state_tensors += ep_state_tensors
+            logpolicies += ep_logpolicies
             action_indeces += ep_action_indeces
             cumulative_rewards += ep_cumulative_rewards
 
@@ -374,13 +416,10 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
         #                                          state.height)
         # states_batch[inversion_map] = inverted_states
 
+        logpolicies_batch = torch.stack(tuple(logpolicies))
+
         assert states_batch.shape[0] == cumulative_rewards_tensor.shape[0]
         action_indeces = np.array(action_indeces)
-
-        policies_batch = policy_net(states_batch)
-        entropy = -(policies_batch * policies_batch.exp()).sum(1)
-
-        probabilities_batch = policies_batch[:, action_indeces]
 
         # Value function
         values_batch = value_net(states_batch).squeeze()
@@ -392,16 +431,19 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
         with torch.no_grad():
             values_estimates = value_net(states_batch).squeeze()
 
-        loss = (-(cumulative_rewards_tensor - values_estimates)
-                * probabilities_batch - entropy_coefficient * entropy).mean()
+        # TODO: generalize advantage function through parameter
+        # TODO: normalize advantage (?)
+        advantage = cumulative_rewards_tensor - values_estimates
 
-        loss.backward()
-        optimizer.step()
+        policy_loss, entropy = policy_update_function(
+            policy_net, states_batch, logpolicies_batch, action_indeces,
+            advantage, optimizer, entropy_coefficient)
 
-        writer.add_scalar('train/entropy', entropy.mean(),
+        writer.add_scalar('train/entropy', entropy,
                           global_episode_index)
         writer.add_scalar('train/value_loss', value_loss, global_episode_index)
-        writer.add_scalar('train/policy_loss', loss, global_episode_index)
+        writer.add_scalar('train/policy_loss', policy_loss,
+                          global_episode_index)
 
         # Evaluation
         epoch, local_episode = divmod(global_episode_index, episodes_per_epoch)
