@@ -236,8 +236,8 @@ def sample_action(state: Corso,
 
 def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
             discount=0.9, player2_sampler=torch.distributions.Bernoulli(0.5)
-            ) -> tuple[deque[torch.tensor], deque[torch.Tensor],
-                       deque[int], list[float]]:
+            ) -> tuple[deque[torch.Tensor], deque[torch.Tensor],
+                       deque[int], torch.Tensor]:
     """Play a full episode and return trajectory information.
 
     In order:
@@ -301,15 +301,7 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
     # if winner == 0:
     #     rewards[-1] = 0.5
 
-    # Cumulative rewards
-    cumulative_rewards = [0] * len(rewards)
-    cumulative_rewards[-1] = rewards[-1]
-
-    for i in reversed(range(0, len(cumulative_rewards) - 1)):
-        cumulative_rewards[i] = (discount * cumulative_rewards[i + 1]
-                                 + rewards[i])
-
-    return state_tensors, logpolicies, action_indeces, cumulative_rewards
+    return state_tensors, logpolicies, action_indeces, rewards
 
 
 def reinforce(
@@ -344,6 +336,38 @@ def reinforce(
     policy_optimizer.step()
 
     return loss, entropy.mean()
+
+
+def cumulative_rewards_advantage(rewards: Sequence[float],
+                                 discount: float,
+                                 state_values: Optional[torch.Tensor] = None
+                                 ) -> torch.Tensor:
+    """Vanilla REINFORCE advantage function.
+
+    Implemented as: :math:`G`, which is the vector of
+    cumulative rewards at each timestep, discounted by ``discount``.
+    """
+    cumulative_rewards = [0] * len(rewards)
+    cumulative_rewards[-1] = rewards[-1]
+
+    for i in reversed(range(0, len(cumulative_rewards) - 1)):
+        cumulative_rewards[i] = (discount * cumulative_rewards[i + 1]
+                                 + rewards[i])
+
+    return torch.tensor(cumulative_rewards)
+
+
+def baseline_advantage(rewards: Sequence[float], discount: float,
+                       state_values: torch.Tensor) -> torch.Tensor:
+    """Baseline advantage function.
+
+    Implemented as: :math:`G - V` where :math:`G` is the vector of
+    cumulative rewards at each timestep (discounted by ``discount``)
+    and :math:`V` is the vector of estimated state values at each
+    timestep.
+    """
+    return (cumulative_rewards_advantage(rewards, discount, state_values)
+            - state_values)
 
 
 def policy_gradient(
@@ -382,62 +406,69 @@ def policy_gradient(
         logpolicies = deque()
         action_indeces = deque()
         cumulative_rewards = []
+        rewards = []
 
         # Episodes
         opponent = random.choice(curriculum)
         episodes_returns = 0
         for episode_index in range(episodes_per_epoch):
             (ep_state_tensors, ep_logpolicies, ep_action_indeces,
-             ep_cumulative_rewards) = \
+             ep_rewards) = \
                 episode(policy_net, opponent, starting_state,
                         discount, player2_sampler=player2_sampler)
 
-            episodes_returns += ep_cumulative_rewards[-1]
+            # Stack states episode wise for later retrieval. Keeping
+            # the trajectories separate is necessary for advantage
+            # calculations, but will eventually be merged together in
+            # order to fit the value function estimator
+            ep_wise_state_tensor = torch.stack(tuple(ep_state_tensors))
 
-            state_tensors += ep_state_tensors
+            # Compute cumulative rewards in order to fit
+            ep_cumulative_rewards = cumulative_rewards_advantage(
+                ep_rewards, discount)
+
+            episodes_returns += ep_cumulative_rewards[-1]       # Analysis
+
+            state_tensors.append(ep_wise_state_tensor)
             logpolicies += ep_logpolicies
             action_indeces += ep_action_indeces
-            cumulative_rewards += ep_cumulative_rewards
+            rewards.append(ep_rewards)
+            cumulative_rewards.append(ep_cumulative_rewards)
 
         writer.add_scalar('train/average_return',
                           episodes_returns / episodes_per_epoch,
                           global_episode_index)
 
-        cumulative_rewards_tensor = torch.tensor(cumulative_rewards)
-
-        # Recompute policy on the sequence of states and optimize.
-        # Recomputation is a potential slowdown w.r.t. using directly
-        # the scores computed during training, but allows for data
-        # augmentation.
-        # inversion_map = bernoulli.sample((len(state_tensors),)).bool()
-        states_batch = torch.stack(tuple(state_tensors))
-        # inverted_states = augmentation_inversion(states_batch[inversion_map],
-        #                                          action_indeces, state.width,
-        #                                          state.height)
-        # states_batch[inversion_map] = inverted_states
-
+        cumulative_rewards_batch = torch.cat(cumulative_rewards)
+        states_batch = torch.cat(tuple(state_tensors))
         logpolicies_batch = torch.stack(tuple(logpolicies))
 
-        assert states_batch.shape[0] == cumulative_rewards_tensor.shape[0]
+        assert states_batch.shape[0] == cumulative_rewards_batch.shape[0]
         action_indeces = np.array(action_indeces)
 
-        # Value function
+        # Fit value function
         values_batch = value_net(states_batch).squeeze()
+        value_loss = F.mse_loss(values_batch, cumulative_rewards_batch)
 
-        value_loss = F.mse_loss(values_batch, cumulative_rewards_tensor)
         value_loss.backward()
         value_optimizer.step()
 
-        with torch.no_grad():
-            values_estimates = value_net(states_batch).squeeze()
-
+        # Compute advantage
         # TODO: generalize advantage function through parameter
         # TODO: normalize advantage (?)
-        advantage = cumulative_rewards_tensor - values_estimates
+        advantage = []
+        with torch.no_grad():
+            for episode_states, episode_rewards in zip(state_tensors, rewards):
+                values_estimates = value_net(episode_states).squeeze()
+                advantage.append(
+                    baseline_advantage(episode_rewards, discount,
+                                       values_estimates))
+        advantage_batch = torch.cat(advantage)
 
+        # Fit policy
         policy_loss, entropy = policy_update_function(
             policy_net, states_batch, logpolicies_batch, action_indeces,
-            advantage, optimizer, entropy_coefficient)
+            advantage_batch, optimizer, entropy_coefficient)
 
         writer.add_scalar('train/entropy', entropy,
                           global_episode_index)
