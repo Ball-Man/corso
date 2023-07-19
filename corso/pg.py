@@ -20,8 +20,6 @@ from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
 
-bernoulli = torch.distributions.Bernoulli(0.5)
-
 
 @lru_cache()
 def _one_hot_cell(cell: CellState) -> tuple[int, int, int, int]:
@@ -237,8 +235,8 @@ def sample_action(state: Corso,
 
 
 def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
-            discount=0.9) -> tuple[deque[torch.tensor], deque[int],
-                                   list[float]]:
+            discount=0.9, player2_sampler=torch.distributions.Bernoulli(0.5)
+            ) -> tuple[deque[torch.tensor], deque[int], list[float]]:
     """Play a full episode and return trajectory information.
 
     In order:
@@ -252,7 +250,7 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
     winner = 1
 
     state = starting_state
-    agent_is_second_player = bernoulli.sample()
+    agent_is_second_player = player2_sampler.sample()
     if agent_is_second_player:
         state = state.step(opponent.select_action(state))
 
@@ -313,6 +311,9 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
 def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
               discount=0.9, entropy_coefficient=0.05,
               evaluation_after=1, save_curriculum_after=1,
+              curriculum_size=None,
+              policy_lr=1e-3, value_function_lr=1e-3,
+              player2_probability=0.5,
               starting_state: Corso = Corso(),
               evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
               writer: Optional[SummaryWriter] = None):
@@ -323,10 +324,12 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
             os.path.join('runs',
                          datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
 
-    optimizer = optim.Adam(policy_net.parameters(), 0.0001)
-    value_optimizer = optim.Adam(value_net.parameters(), 0.001)
+    optimizer = optim.Adam(policy_net.parameters(), policy_lr)
+    value_optimizer = optim.Adam(value_net.parameters(), value_function_lr)
 
-    curriculum = deque([RandomPlayer()], maxlen=20)
+    curriculum = deque([RandomPlayer()], maxlen=curriculum_size)
+
+    player2_sampler = torch.distributions.Bernoulli(player2_probability)
 
     # Epochs
     for global_episode_index in range(0, episodes, episodes_per_epoch):
@@ -346,7 +349,7 @@ def reinforce(policy_net, value_net, episodes=1000, episodes_per_epoch=64,
         for episode_index in range(episodes_per_epoch):
             ep_state_tensors, ep_action_indeces, ep_cumulative_rewards = \
                 episode(policy_net, opponent, starting_state,
-                        discount)
+                        discount, player2_sampler=player2_sampler)
 
             episodes_returns += ep_cumulative_rewards[-1]
 
