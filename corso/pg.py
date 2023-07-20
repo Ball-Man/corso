@@ -3,6 +3,7 @@ import os.path
 import random
 import copy
 import datetime
+import math
 from functools import lru_cache
 from collections import deque
 from typing import Iterable, Optional, Sequence
@@ -336,6 +337,60 @@ def reinforce(
     policy_optimizer.step()
 
     return loss, entropy.mean()
+
+
+def ppo_clip(policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
+             action_indeces: np.ndarray, advantage: torch.Tensor,
+             policy_optimizer: torch.optim.Optimizer,
+             entropy_coefficient: float, *,
+             minibatches=1, epsilon=0.1) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute a clipped PPO update.
+
+    Mean policy loss and mean entropy are returned.
+    """
+    samples = states.shape[0]
+    perm_index = torch.randperm(samples)
+    batch_size = math.ceil(samples / minibatches)
+
+    total_entropy = 0
+    total_loss = 0
+    for batch_start in range(0, samples, batch_size):
+        # Shuffle data and divide into minibatches
+        perm_batch = perm_index[batch_start : batch_start + batch_size] # NOQA
+
+        states_batch = states[perm_batch]
+        logpolicies_batch = logpolicies[perm_batch]
+        action_indeces_batch = action_indeces[perm_batch]
+        advantage_batch = advantage[perm_batch]
+
+        policy_optimizer.zero_grad()
+
+        policies_batch = policy_net(states_batch)
+
+        entropy = -(policies_batch * policies_batch.exp()).sum(1)
+        total_entropy += entropy.mean()
+
+        # logpolicies_batch is the "old" policy, which originally played
+        # the episodes. policies_batch is the "new" policy.
+        probabilities_batch = policies_batch[:, action_indeces_batch]
+
+        # PPO clipped loss
+        # Use log probabilities to compute the ratio, inspired by OpenAI
+        # spinning up:
+        # https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/ppo.py
+        # NOQA
+        ratio = torch.exp(probabilities_batch
+                          - logpolicies_batch[:, action_indeces_batch])
+        clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
+        loss = (-torch.min(ratio * advantage_batch,
+                           clipped_ratio * advantage_batch)
+                - entropy_coefficient * entropy).mean()
+        total_loss += loss
+
+        loss.backward()
+        policy_optimizer.step()
+
+    return total_loss / minibatches, total_entropy / minibatches
 
 
 def cumulative_rewards_advantage(rewards: Sequence[float],
