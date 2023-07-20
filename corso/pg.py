@@ -372,7 +372,9 @@ def baseline_advantage(rewards: Sequence[float], discount: float,
 
 def policy_gradient(
     policy_net, value_net, episodes=1000, episodes_per_epoch=64,
-    discount=0.9, policy_update_function=reinforce, entropy_coefficient=0.05,
+    discount=0.9, policy_update_function=reinforce,
+    advantage_function=baseline_advantage,
+    entropy_coefficient=0.05,
     evaluation_after=1, save_curriculum_after=1,
     curriculum_size=None,
     policy_lr=1e-3, value_function_lr=1e-3,
@@ -461,7 +463,7 @@ def policy_gradient(
             for episode_states, episode_rewards in zip(state_tensors, rewards):
                 values_estimates = value_net(episode_states).squeeze()
                 advantage.append(
-                    baseline_advantage(episode_rewards, discount,
+                    advantage_function(episode_rewards, discount,
                                        values_estimates))
         advantage_batch = torch.cat(advantage)
 
