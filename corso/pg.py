@@ -368,7 +368,7 @@ def ppo_clip(policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
         policies_batch = policy_net(states_batch)
 
         entropy = -(policies_batch * policies_batch.exp()).sum(1)
-        total_entropy += entropy.mean()
+        total_entropy += entropy.detach().mean()
 
         # logpolicies_batch is the "old" policy, which originally played
         # the episodes. policies_batch is the "new" policy.
@@ -385,7 +385,7 @@ def ppo_clip(policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
         loss = (-torch.min(ratio * advantage_batch,
                            clipped_ratio * advantage_batch)
                 - entropy_coefficient * entropy).mean()
-        total_loss += loss
+        total_loss += loss.detach()
 
         loss.backward()
         policy_optimizer.step()
