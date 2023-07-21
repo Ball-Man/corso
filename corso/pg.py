@@ -425,6 +425,40 @@ def baseline_advantage(rewards: Sequence[float], discount: float,
             - state_values)
 
 
+def fit_value_function(value_net, states: torch.Tensor,
+                       targets: torch.Tensor,
+                       value_optimizer: torch.optim.Optimizer,
+                       minibatches=1) -> torch.Tensor:
+    """Fit the value function on the given states and values.
+
+    MSE is used as loss function.
+
+    Mean loss is returned.
+    """
+    samples = states.shape[0]
+    perm_index = torch.randperm(samples)
+    batch_size = math.ceil(samples / minibatches)
+
+    total_loss = 0
+    for batch_start in range(0, samples, batch_size):
+        # Shuffle data and divide into minibatches
+        perm_batch = perm_index[batch_start : batch_start + batch_size] # NOQA
+
+        states_batch = states[perm_batch]
+        targets_batch = targets[perm_batch]
+
+        value_optimizer.zero_grad()
+
+        values_batch = value_net(states_batch).squeeze()
+        value_loss = F.mse_loss(values_batch, targets_batch)
+        total_loss += value_loss.detach()
+
+        value_loss.backward()
+        value_optimizer.step()
+
+    return total_loss / minibatches
+
+
 def policy_gradient(
     policy_net, value_net, episodes=1000, episodes_per_epoch=64,
     discount=0.9, policy_update_function=reinforce,
@@ -433,6 +467,7 @@ def policy_gradient(
     evaluation_after=1, save_curriculum_after=1,
     curriculum_size=None,
     policy_lr=1e-3, value_function_lr=1e-3,
+    value_function_minibatches=1,
     player2_probability=0.5,
     starting_state: Corso = Corso(),
     evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
@@ -480,7 +515,8 @@ def policy_gradient(
             # order to fit the value function estimator
             ep_wise_state_tensor = torch.stack(tuple(ep_state_tensors))
 
-            # Compute cumulative rewards in order to fit
+            # Compute cumulative rewards, used to fit the value function
+            # estimator
             ep_cumulative_rewards = cumulative_rewards_advantage(
                 ep_rewards, discount)
 
@@ -503,15 +539,7 @@ def policy_gradient(
         assert states_batch.shape[0] == cumulative_rewards_batch.shape[0]
         action_indeces = np.array(action_indeces)
 
-        # Fit value function
-        values_batch = value_net(states_batch).squeeze()
-        value_loss = F.mse_loss(values_batch, cumulative_rewards_batch)
-
-        value_loss.backward()
-        value_optimizer.step()
-
         # Compute advantage
-        # TODO: generalize advantage function through parameter
         # TODO: normalize advantage (?)
         advantage = []
         with torch.no_grad():
@@ -521,6 +549,12 @@ def policy_gradient(
                     advantage_function(episode_rewards, discount,
                                        values_estimates))
         advantage_batch = torch.cat(advantage)
+
+        # Fit value function
+        value_loss = fit_value_function(value_net, states_batch,
+                                        cumulative_rewards_batch,
+                                        value_optimizer,
+                                        value_function_minibatches)
 
         # Fit policy
         policy_loss, entropy = policy_update_function(
