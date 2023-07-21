@@ -467,6 +467,7 @@ def policy_gradient(
     evaluation_after=1, save_curriculum_after=1,
     curriculum_size=None,
     policy_lr=1e-3, value_function_lr=1e-3,
+    policy_weight_decay=0., value_functon_weight_decay=0.,
     value_function_minibatches=1,
     player2_probability=0.5,
     starting_state: Corso = Corso(),
@@ -479,8 +480,10 @@ def policy_gradient(
             os.path.join('runs',
                          datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
 
-    optimizer = optim.Adam(policy_net.parameters(), policy_lr)
-    value_optimizer = optim.Adam(value_net.parameters(), value_function_lr)
+    optimizer = optim.AdamW(policy_net.parameters(), policy_lr,
+                            weight_decay=policy_weight_decay)
+    value_optimizer = optim.AdamW(value_net.parameters(), value_function_lr,
+                                  weight_decay=value_functon_weight_decay)
 
     curriculum = deque([RandomPlayer()], maxlen=curriculum_size)
 
