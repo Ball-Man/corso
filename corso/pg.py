@@ -442,6 +442,15 @@ def bootstrapped_values(rewards: Sequence[float], discount: float,
     return rewards_tensor + discount * next_state_values
 
 
+def td_advantage(rewards: Sequence[float], discount: float,
+                 state_values: torch.Tensor) -> torch.Tensor:
+    r"""Temporal Difference based advantage function.
+
+    Defined as :math:`r + \gamma V(s') - V(s)`.
+    """
+    return bootstrapped_values(rewards, discount, state_values) - state_values
+
+
 def fit_value_function(value_net, states: torch.Tensor,
                        targets: torch.Tensor,
                        value_optimizer: torch.optim.Optimizer,
