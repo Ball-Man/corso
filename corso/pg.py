@@ -412,6 +412,10 @@ def cumulative_rewards_advantage(rewards: Sequence[float],
     return torch.tensor(cumulative_rewards)
 
 
+# Just an alias, used to compute target values for the value function
+montecarlo_values = cumulative_rewards_advantage
+
+
 def baseline_advantage(rewards: Sequence[float], discount: float,
                        state_values: torch.Tensor) -> torch.Tensor:
     """Baseline advantage function.
@@ -423,6 +427,19 @@ def baseline_advantage(rewards: Sequence[float], discount: float,
     """
     return (cumulative_rewards_advantage(rewards, discount, state_values)
             - state_values)
+
+
+def bootstrapped_values(rewards: Sequence[float], discount: float,
+                        state_values: torch.Tensor) -> torch.Tensor:
+    r"""Bootstrapped value estimation, used to fit the value function.
+
+    Defined as :math:`r + \gamma V(s')`.
+    """
+    rewards_tensor = torch.tensor(rewards)
+    # Add a trailing zero as value of the terminal state. The game
+    # outcome is the last immediate reward (rewards[-1]).
+    next_state_values = torch.cat((state_values[1:], torch.zeros(1)))
+    return rewards_tensor + discount * next_state_values
 
 
 def fit_value_function(value_net, states: torch.Tensor,
@@ -463,6 +480,7 @@ def policy_gradient(
     policy_net, value_net, episodes=1000, episodes_per_epoch=64,
     discount=0.9, policy_update_function=reinforce,
     advantage_function=baseline_advantage,
+    value_function_target=montecarlo_values,
     entropy_coefficient=0.05,
     evaluation_after=1, save_curriculum_after=1,
     curriculum_size=None,
@@ -500,7 +518,6 @@ def policy_gradient(
         state_tensors = deque()
         logpolicies = deque()
         action_indeces = deque()
-        cumulative_rewards = []
         rewards = []
 
         # Episodes
@@ -518,44 +535,47 @@ def policy_gradient(
             # order to fit the value function estimator
             ep_wise_state_tensor = torch.stack(tuple(ep_state_tensors))
 
-            # Compute cumulative rewards, used to fit the value function
-            # estimator
             ep_cumulative_rewards = cumulative_rewards_advantage(
-                ep_rewards, discount)
-
+                    ep_rewards, discount)
             episodes_returns += ep_cumulative_rewards[-1]       # Analysis
 
             state_tensors.append(ep_wise_state_tensor)
             logpolicies += ep_logpolicies
             action_indeces += ep_action_indeces
             rewards.append(ep_rewards)
-            cumulative_rewards.append(ep_cumulative_rewards)
 
         writer.add_scalar('train/average_return',
                           episodes_returns / episodes_per_epoch,
                           global_episode_index)
 
-        cumulative_rewards_batch = torch.cat(cumulative_rewards)
         states_batch = torch.cat(tuple(state_tensors))
         logpolicies_batch = torch.stack(tuple(logpolicies))
-
-        assert states_batch.shape[0] == cumulative_rewards_batch.shape[0]
         action_indeces = np.array(action_indeces)
 
         # Compute advantage
         # TODO: normalize advantage (?)
         advantage = []
+        value_targets = []
         with torch.no_grad():
             for episode_states, episode_rewards in zip(state_tensors, rewards):
                 values_estimates = value_net(episode_states).squeeze()
                 advantage.append(
                     advantage_function(episode_rewards, discount,
                                        values_estimates))
+
+                # Compute value function targets either through
+                # montecarlo returns (empirical cumulative rewards)
+                # or bootstrapping
+                value_targets.append(
+                    value_function_target(episode_rewards, discount,
+                                          values_estimates))
+
         advantage_batch = torch.cat(advantage)
+        value_targets_batch = torch.cat(value_targets)
 
         # Fit value function
         value_loss = fit_value_function(value_net, states_batch,
-                                        cumulative_rewards_batch,
+                                        value_targets_batch,
                                         value_optimizer,
                                         value_function_minibatches)
 
