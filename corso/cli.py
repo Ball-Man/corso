@@ -77,6 +77,8 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
     state = starting_state
 
     players = cycle((player1, player2))
+    for _ in range(starting_state.player_index - 1):
+        next(players)
 
     while not state.terminal[0]:
         player = next(players)
