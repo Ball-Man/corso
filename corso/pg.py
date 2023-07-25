@@ -111,7 +111,6 @@ class PolicyNetwork(nn.Module, SavableModule):
         for hidden_layer_nodes in hidden_layers:
             layers.append(nn.Linear(hidden_output_size,
                                     hidden_layer_nodes))
-            layers.append(nn.ReLU())
             hidden_output_size = hidden_layer_nodes
 
         # Output is a policy of size board_w * board_h
@@ -164,7 +163,7 @@ class PolicyNetwork(nn.Module, SavableModule):
             invalid_moves = invalid_moves.view(-1, board_w * board_h)
 
         for layer in self.layers:
-            batch = layer(batch)
+            batch = F.relu(layer(batch))
             batch = F.dropout(batch, self.dropout, self.training)
 
         batch = self.output(batch)
@@ -209,7 +208,6 @@ class ValueFunctionNetwork(nn.Module, SavableModule):
         for hidden_layer_nodes in hidden_layers:
             layers.append(nn.Linear(hidden_output_size,
                                     hidden_layer_nodes))
-            layers.append(nn.ReLU())
             hidden_output_size = hidden_layer_nodes
 
         # Output is a scalar, the state value
@@ -220,7 +218,7 @@ class ValueFunctionNetwork(nn.Module, SavableModule):
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         for layer in self.layers:
-            batch = layer(batch)
+            batch = F.relu(layer(batch))
             batch = F.dropout(batch, self.dropout, self.training)
 
         return F.tanh(self.output(batch))
