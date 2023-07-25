@@ -20,6 +20,7 @@ from corso.evaluation import AgentEvaluationStrategy
 from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
+from corso.minmax import MinMaxPlayer
 
 
 @lru_cache()
@@ -60,6 +61,7 @@ def model_tensor(state: Corso) -> torch.Tensor:
     board_tensor = torch.Tensor(
         tuple(tuple(map(_one_hot_cell, row)) for row in state.board))
 
+    # Point of view of the current player
     if state.player_index == 2:
         board_tensor = board_tensor[:, :, [2, 3, 0, 1]]
 
@@ -118,43 +120,61 @@ class PolicyNetwork(nn.Module, SavableModule):
 
         self.layers = nn.ModuleList(layers)
 
-    def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
+    def state_features(self, state: Corso) -> torch.Tensor:
+        """Retrieve a tensor representing a game state.
+
+        Return shape: ``[1, height * width * num_players * 2]``.
+        """
+        # This comes with some necessary reallocations before feeding the
+        # structure to the tensor constructor. Things are cached where
+        # possible. Time cost of this transformation (5x5 board): ~1.5e-5
+        # Organizing the Corso state in a way that is more friendly w.r.t.
+        # this representation (e.g. with one hot encoded tuples as cell
+        # states instead of the abstract CellState class) is the most viable
+        # option after this one.
+
+        board_tensor = torch.Tensor(
+            tuple(tuple(map(_one_hot_cell, row)) for row in state.board))
+
+        # Point of view of the current player
+        if state.player_index == 2:
+            board_tensor = board_tensor[:, :, [2, 3, 0, 1]]
+
+        return board_tensor.flatten().unsqueeze(0)
+
+    def forward(self, batch: torch.Tensor) -> tuple[torch.Tensor,
+                                                    torch.Tensor]:
+        """Predict policy from a batch of states.
+
+        Invalid moves are masked (shall be ``-inf`` in log probabilities
+        and ``0`` in true probabilities).
+
+        Return a pair of tensors in the form: ``(log_probabilities,
+        true_probabilities)``.
+        """
+        # Invalid move masking:
+        # Reshape input as a grid and collapse it into a bitmap of
+        # invalid locations
+        with torch.no_grad():
+            board_w, board_h = self.board_size
+
+            reshaped_input = batch.view(-1, board_h, board_w,
+                                        self.num_players * 2)
+            invalid_moves = (reshaped_input[:, :, :, [0, 2, 3]].sum(
+                dim=-1, dtype=torch.bool))
+            invalid_moves = invalid_moves.view(-1, board_w * board_h)
+
         for layer in self.layers:
             batch = layer(batch)
             batch = F.dropout(batch, self.dropout, self.training)
 
-        return F.log_softmax(self.output(batch), dim=1)
+        batch = self.output(batch)
+        # Invalid moves are set to an extremely negative value.
+        # Extremely negative logits will results in 0 probability of
+        # choosing the action
+        batch[invalid_moves] = -1e10
 
-    def get_masked_policy(self, state: Corso) -> tuple[torch.Tensor,
-                                                       torch.Tensor,
-                                                       torch.Tensor]:
-        """Sample action from policy.
-
-        Return value is a tuple in the form::
-
-        - Tensor representation of the given state
-        - Output tensor from the network (log action probabilities)
-        - Action policy as a valid density vector. Illegal moves are
-            masked to 0 probability.
-        """
-        state_tensor = model_tensor(state)
-        policy = self(state_tensor.unsqueeze(0))[0]
-
-        # Not all moves given by the network are legal. Mask illegal
-        # moves with 0 probabilities.
-        policy_mask = torch.zeros_like(
-            policy, dtype=torch.bool).view(state.height, state.width)
-        for action in state._iter_actions():
-            policy_mask[action[1:]] = 1
-        policy_mask = policy_mask.flatten()
-
-        masked_policy = policy_mask * policy.exp()
-        # If underflowing, sample uniformly between legal moves
-        if masked_policy[policy_mask].sum() < 1e-12:
-            masked_policy[policy_mask] += 1.
-
-        return state_tensor, policy, masked_policy / masked_policy.sum()
+        return F.log_softmax(batch, dim=1), F.softmax(batch, dim=1)
 
     def get_config(self) -> dict:
         """Return a configuration dict: used to save/load the model."""
@@ -263,13 +283,13 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
     # without expanding.
     for _ in range(state.width * state.height + 1):
         with torch.no_grad():
-            # Retrieve policy from network, mask illegal moves and sample
-            state_tensor, logprobs, action_policy = \
-                policy_net.get_masked_policy(state)
-            action_index, action = sample_action(state, action_policy)
+            # Retrieve policy from network and sample
+            state_tensor = policy_net.state_features(state)
+            logpolicy, policy = policy_net(state_tensor)
+            action_index, action = sample_action(state, policy.squeeze())
 
         state_tensors.append(state_tensor)
-        logpolicies.append(logprobs)
+        logpolicies.append(logpolicy)
         action_indeces.append(action_index)
 
         if action not in state.actions:
@@ -306,7 +326,7 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
 
 
 def reinforce(
-    policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
+    policy_net, states: torch.Tensor, episode_logpolicies: torch.Tensor,
     action_indeces: np.ndarray, advantage: torch.Tensor,
     policy_optimizer: torch.optim.Optimizer,
         entropy_coefficient: float) -> tuple[torch.Tensor, torch.Tensor]:
@@ -318,19 +338,19 @@ def reinforce(
     where :math:`A` is the advantage function. The advantage must be
     precomputed and passed as parameter.
 
-    ``logpolicies`` is expected to be the tensor of log predictions
+    ``episode_logpolicies`` is expected to be the tensor of log predictions
     obtained during data collection. It is unused in this function.
 
     Mean policy loss and mean entropy are returned.
     """
     policy_optimizer.zero_grad()
 
-    policies_batch = policy_net(states)
-    entropy = -(policies_batch * policies_batch.exp()).sum(1)
+    logpolicies_batch, policies_batch = policy_net(states)
+    entropy = -(logpolicies_batch * policies_batch).sum(1)
 
-    probabilities_batch = policies_batch[:, action_indeces]
+    logprobabilities_batch = logpolicies_batch[:, action_indeces]
 
-    loss = (-probabilities_batch * advantage
+    loss = (-logprobabilities_batch * advantage
             - entropy_coefficient * entropy).mean()
 
     loss.backward()
@@ -339,7 +359,8 @@ def reinforce(
     return loss, entropy.mean()
 
 
-def ppo_clip(policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
+def ppo_clip(policy_net, states: torch.Tensor,
+             episode_logpolicies: torch.Tensor,
              action_indeces: np.ndarray, advantage: torch.Tensor,
              policy_optimizer: torch.optim.Optimizer,
              entropy_coefficient: float, *,
@@ -359,28 +380,29 @@ def ppo_clip(policy_net, states: torch.Tensor, logpolicies: torch.Tensor,
         perm_batch = perm_index[batch_start : batch_start + batch_size] # NOQA
 
         states_batch = states[perm_batch]
-        logpolicies_batch = logpolicies[perm_batch]
+        episode_logpolicies_batch = episode_logpolicies[perm_batch]
         action_indeces_batch = action_indeces[perm_batch]
         advantage_batch = advantage[perm_batch]
 
         policy_optimizer.zero_grad()
 
-        policies_batch = policy_net(states_batch)
+        logpolicies_batch, policies_batch = policy_net(states_batch)
 
-        entropy = -(policies_batch * policies_batch.exp()).sum(1)
+        entropy = -(logpolicies_batch * policies_batch).sum(1)
         total_entropy += entropy.detach().mean()
 
-        # logpolicies_batch is the "old" policy, which originally played
-        # the episodes. policies_batch is the "new" policy.
-        probabilities_batch = policies_batch[:, action_indeces_batch]
+        # episode_logpolicies_batch are the "old" log policy, which
+        # originally played the episodes.
+        # logpolicies_batch/policies_batch are the "new" policy.
+        logprobabilities_batch = logpolicies_batch[:, action_indeces_batch]
 
         # PPO clipped loss
         # Use log probabilities to compute the ratio, inspired by OpenAI
         # spinning up:
         # https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/ppo.py
         # NOQA
-        ratio = torch.exp(probabilities_batch
-                          - logpolicies_batch[:, action_indeces_batch])
+        ratio = torch.exp(logprobabilities_batch
+                          - episode_logpolicies_batch[:, action_indeces_batch])
         clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
         loss = (-torch.min(ratio * advantage_batch,
                            clipped_ratio * advantage_batch)
@@ -542,7 +564,7 @@ def policy_gradient(
             # the trajectories separate is necessary for advantage
             # calculations, but will eventually be merged together in
             # order to fit the value function estimator
-            ep_wise_state_tensor = torch.stack(tuple(ep_state_tensors))
+            ep_wise_state_tensor = torch.cat(tuple(ep_state_tensors))
 
             ep_cumulative_rewards = cumulative_rewards_advantage(
                     ep_rewards, discount)
@@ -558,7 +580,7 @@ def policy_gradient(
                           global_episode_index)
 
         states_batch = torch.cat(tuple(state_tensors))
-        logpolicies_batch = torch.stack(tuple(logpolicies))
+        logpolicies_batch = torch.cat(tuple(logpolicies))
         action_indeces = np.array(action_indeces)
 
         # Compute advantage
@@ -666,8 +688,11 @@ class PolicyNetworkPlayer(Player):
     def select_action(self, state: Corso) -> Action:
         """ """
         with torch.no_grad():
-            _, _, action_policy = self.policy_network.get_masked_policy(state)
-            if self.verbose:
-                print(action_policy.view(state.height, state.width))
+            # Retrieve policy from network and sample
+            state_tensor = self.policy_network.state_features(state)
+            logpolicy, policy = self.policy_network(state_tensor)
 
-            return self.sampling_function(state, action_policy)[1]
+            if self.verbose:
+                print(policy.view(state.height, state.width))
+
+            return self.sampling_function(state, policy.squeeze())[1]
