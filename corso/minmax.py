@@ -98,11 +98,12 @@ class MinMaxPlayer(Player):
     """
 
     def __init__(self, depth=3, heuristic=heuristic, temperature=1.,
-                 verbose=False):
+                 verbose=False, rng=random.Random()):
         self.depth = depth - 1
         self.heuristic = heuristic
         self.temperature = temperature
         self.verbose = verbose
+        self.rng = rng
 
     def select_action(self, state: Corso) -> Action:
         """Run a minmax search and return best scoring action."""
@@ -123,7 +124,7 @@ class MinMaxPlayer(Player):
         if self.verbose:
             print(tuple(zip(policy, actions)))
 
-        return random.choices(actions, policy)[0]
+        return self.rng.choices(actions, policy)[0]
 
 
 def softmax(x: np.ndarray) -> np.ndarray:

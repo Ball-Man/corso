@@ -231,20 +231,25 @@ class ValueFunctionNetwork(nn.Module, SavableModule):
 
 
 def greedy_sample_action(state: Corso,
-                         action_policy: torch.Tensor) -> tuple[int, Action]:
-    """Given an action policy, return best scoring action."""
+                         action_policy: torch.Tensor,
+                         rng=None) -> tuple[int, Action]:
+    """Given an action policy, return best scoring action.
+
+    RNG is unused.
+    """
     action_index = action_policy.argmax().item()
     row, column = divmod(action_index, state.width)
     return action_index, Action(state.player_index, row, column)
 
 
 def sample_action(state: Corso,
-                  action_policy: torch.Tensor) -> tuple[int, Action]:
+                  action_policy: torch.Tensor,
+                  rng=random.Random()) -> tuple[int, Action]:
     """Given an action policy, return a sampled action accordingly."""
     # TODO: reproducibility
     # random.choices is 3+ times faster than np.random.choice in
     # this context.
-    action_index, = random.choices(
+    action_index, = rng.choices(
         _action_indeces(state.width, state.height),
         action_policy)
 
@@ -253,7 +258,7 @@ def sample_action(state: Corso,
 
 
 def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
-            discount=0.9, player2_sampler=torch.distributions.Bernoulli(0.5)
+            discount=0.9, player2_probability=0.5, rng=random.Random(),
             ) -> tuple[deque[torch.Tensor], deque[torch.Tensor],
                        deque[int], torch.Tensor]:
     """Play a full episode and return trajectory information.
@@ -271,7 +276,8 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
     winner = 1
 
     state = starting_state
-    agent_is_second_player = player2_sampler.sample()
+
+    agent_is_second_player = rng.random() < player2_probability
     if agent_is_second_player:
         state = state.step(opponent.select_action(state))
 
@@ -282,8 +288,11 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
         with torch.no_grad():
             # Retrieve policy from network and sample
             state_tensor = policy_net.state_features(state)
+            # During evaluation there should be no RNG sampling
             logpolicy, policy = policy_net(state_tensor)
-            action_index, action = sample_action(state, policy.squeeze())
+
+            action_index, action = sample_action(state, policy.squeeze(),
+                                                 rng=rng)
 
         state_tensors.append(state_tensor)
         logpolicies.append(logpolicy)
@@ -322,11 +331,12 @@ def episode(policy_net, opponent: Player, starting_state: Corso = Corso(),
     return state_tensors, logpolicies, action_indeces, rewards
 
 
-def reinforce(
-    policy_net, states: torch.Tensor, episode_logpolicies: torch.Tensor,
-    action_indeces: np.ndarray, advantage: torch.Tensor,
-    policy_optimizer: torch.optim.Optimizer,
-        entropy_coefficient: float) -> tuple[torch.Tensor, torch.Tensor]:
+def reinforce(policy_net, states: torch.Tensor,
+              episode_logpolicies: torch.Tensor,
+              action_indeces: np.ndarray, advantage: torch.Tensor,
+              policy_optimizer: torch.optim.Optimizer,
+              entropy_coefficient: float,
+              generator=None) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Compute a reinforce update, given policy and advantage.
 
     In particular, the reinforce update is computed by gradient descent
@@ -340,9 +350,19 @@ def reinforce(
 
     Mean policy loss and mean entropy are returned.
     """
+    if generator is None:
+        generator = torch.random.default_generator
+
     policy_optimizer.zero_grad()
 
-    logpolicies_batch, policies_batch = policy_net(states)
+    # Use user-passed generator during inference
+    with torch.random.fork_rng():
+        torch.random.default_generator.set_state(generator.get_state())
+
+        logpolicies_batch, policies_batch = policy_net(states)
+
+        generator.set_state(torch.random.default_generator.get_state())
+
     entropy = -(logpolicies_batch * policies_batch).sum(1)
 
     logprobabilities_batch = logpolicies_batch[:, action_indeces]
@@ -361,13 +381,17 @@ def ppo_clip(policy_net, states: torch.Tensor,
              action_indeces: np.ndarray, advantage: torch.Tensor,
              policy_optimizer: torch.optim.Optimizer,
              entropy_coefficient: float, *,
-             minibatches=1, epsilon=0.1) -> tuple[torch.Tensor, torch.Tensor]:
+             minibatches=1, epsilon=0.1,
+             generator=None) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute a clipped PPO update.
 
     Mean policy loss and mean entropy are returned.
     """
+    if generator is None:
+        generator = torch.random.default_generator
+
     samples = states.shape[0]
-    perm_index = torch.randperm(samples)
+    perm_index = torch.randperm(samples, generator=generator)
     batch_size = math.ceil(samples / minibatches)
 
     total_entropy = 0
@@ -383,7 +407,13 @@ def ppo_clip(policy_net, states: torch.Tensor,
 
         policy_optimizer.zero_grad()
 
-        logpolicies_batch, policies_batch = policy_net(states_batch)
+        # Use user-passed generator during inference
+        with torch.random.fork_rng():
+            torch.random.default_generator.set_state(generator.get_state())
+
+            logpolicies_batch, policies_batch = policy_net(states_batch)
+
+            generator.set_state(torch.random.default_generator.get_state())
 
         entropy = -(logpolicies_batch * policies_batch).sum(1)
         total_entropy += entropy.detach().mean()
@@ -473,15 +503,18 @@ def td_advantage(rewards: Sequence[float], discount: float,
 def fit_value_function(value_net, states: torch.Tensor,
                        targets: torch.Tensor,
                        value_optimizer: torch.optim.Optimizer,
-                       minibatches=1) -> torch.Tensor:
+                       minibatches=1, generator=None) -> torch.Tensor:
     """Fit the value function on the given states and values.
 
     MSE is used as loss function.
 
     Mean loss is returned.
     """
+    if generator is None:
+        generator = torch.random.default_generator
+
     samples = states.shape[0]
-    perm_index = torch.randperm(samples)
+    perm_index = torch.randperm(samples, generator=generator)
     batch_size = math.ceil(samples / minibatches)
 
     total_loss = 0
@@ -494,7 +527,14 @@ def fit_value_function(value_net, states: torch.Tensor,
 
         value_optimizer.zero_grad()
 
-        values_batch = value_net(states_batch).squeeze()
+        # Use user-passed generator during inference
+        with torch.random.fork_rng():
+            torch.random.default_generator.set_state(generator.get_state())
+
+            values_batch = value_net(states_batch).squeeze()
+
+            generator.set_state(torch.random.default_generator.get_state())
+
         value_loss = F.mse_loss(values_batch, targets_batch)
         total_loss += value_loss.detach()
 
@@ -518,7 +558,7 @@ def policy_gradient(
     player2_probability=0.5,
     starting_state: Corso = Corso(),
     evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
-        writer: Optional[SummaryWriter] = None):
+        writer: Optional[SummaryWriter] = None, seed=None):
     """ """
     # Build a default writer if not provided
     if writer is None:
@@ -531,16 +571,28 @@ def policy_gradient(
     value_optimizer = optim.AdamW(value_net.parameters(), value_function_lr,
                                   weight_decay=value_functon_weight_decay)
 
-    curriculum = deque([RandomPlayer()], maxlen=curriculum_size)
+    curriculum = deque([RandomPlayer(rng=random.Random(seed))],
+                       maxlen=curriculum_size)
 
-    player2_sampler = torch.distributions.Bernoulli(player2_probability)
+    # Initialize RNGs
+    rng = random.Random(seed)
+    if seed is None:
+        torch_generator = torch.random.default_generator
+    else:
+        torch_generator = torch.Generator()
+        torch_generator.manual_seed(seed)
+
+    # Fork a new RNG for evaluation, so that evaluation strategy
+    # doesn't affect training's random sequence (hence the same final
+    # policy/model can be obtained independently from its evaluation
+    # strategy).
+    evaluation_rng = random.Random(seed)
 
     # Epochs
     for global_episode_index in range(0, episodes, episodes_per_epoch):
-        policy_net.train()
-        optimizer.zero_grad()
+        policy_net.eval()
 
-        value_net.train()
+        optimizer.zero_grad()
         value_optimizer.zero_grad()
 
         state_tensors = deque()
@@ -549,13 +601,14 @@ def policy_gradient(
         rewards = []
 
         # Episodes
-        opponent = random.choice(curriculum)
+        opponent = rng.choice(curriculum)
         episodes_returns = 0
         for episode_index in range(episodes_per_epoch):
             (ep_state_tensors, ep_logpolicies, ep_action_indeces,
              ep_rewards) = \
                 episode(policy_net, opponent, starting_state,
-                        discount, player2_sampler=player2_sampler)
+                        discount, player2_probability=player2_probability,
+                        rng=rng)
 
             # Stack states episode wise for later retrieval. Keeping
             # the trajectories separate is necessary for advantage
@@ -582,10 +635,12 @@ def policy_gradient(
 
         # Compute advantage
         # TODO: normalize advantage (?)
+        value_net.eval()
         advantage = []
         value_targets = []
         with torch.no_grad():
             for episode_states, episode_rewards in zip(state_tensors, rewards):
+                # During evaluation there should be no RNG sampling
                 values_estimates = value_net(episode_states).squeeze()
                 advantage.append(
                     advantage_function(episode_rewards, discount,
@@ -602,15 +657,19 @@ def policy_gradient(
         value_targets_batch = torch.cat(value_targets)
 
         # Fit value function
+        value_net.train()
         value_loss = fit_value_function(value_net, states_batch,
                                         value_targets_batch,
                                         value_optimizer,
-                                        value_function_minibatches)
+                                        value_function_minibatches,
+                                        generator=torch_generator)
 
         # Fit policy
+        policy_net.train()
         policy_loss, entropy = policy_update_function(
             policy_net, states_batch, logpolicies_batch, action_indeces,
-            advantage_batch, optimizer, entropy_coefficient)
+            advantage_batch, optimizer, entropy_coefficient,
+            generator=torch_generator)
 
         writer.add_scalar('train/entropy', entropy,
                           global_episode_index)
@@ -623,7 +682,9 @@ def policy_gradient(
         if local_episode == 0 and ((epoch + 1) % evaluation_after == 0
                                    or epoch == 0):
             policy_net.eval()
-            policy_player = PolicyNetworkPlayer(policy_net)
+
+            policy_player = PolicyNetworkPlayer(policy_net,
+                                                rng=evaluation_rng)
 
             for evaluation_stragety in evaluation_strageties:
                 evaluation_results = evaluation_stragety.evaluate(
@@ -639,26 +700,32 @@ def policy_gradient(
             policy_net_copy.eval()
             curriculum.append(
                 PolicyNetworkPlayer(policy_net_copy,
-                                    sampling_function=sample_action))
+                                    sampling_function=sample_action,
+                                    rng=rng))
 
 
 class PolicyNetworkPlayer(Player):
     """Player whose policy is computed via :class:`PolicyNetwork`."""
 
     def __init__(self, network: PolicyNetwork, verbose=False,
-                 sampling_function=greedy_sample_action):
+                 sampling_function=greedy_sample_action,
+                 rng=random.Random()):
         self.policy_network = network
         self.verbose = verbose
         self.sampling_function = sampling_function
+        self.rng = rng
 
     def select_action(self, state: Corso) -> Action:
         """ """
         with torch.no_grad():
             # Retrieve policy from network and sample
             state_tensor = self.policy_network.state_features(state)
+
+            # During evaluation there should be no RNG sampling
             logpolicy, policy = self.policy_network(state_tensor)
 
             if self.verbose:
                 print(policy.view(state.height, state.width))
 
-            return self.sampling_function(state, policy.squeeze())[1]
+            return self.sampling_function(state, policy.squeeze(),
+                                          rng=self.rng)[1]
