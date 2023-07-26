@@ -246,7 +246,6 @@ def sample_action(state: Corso,
                   action_policy: torch.Tensor,
                   rng=random.Random()) -> tuple[int, Action]:
     """Given an action policy, return a sampled action accordingly."""
-    # TODO: reproducibility
     # random.choices is 3+ times faster than np.random.choice in
     # this context.
     action_index, = rng.choices(
