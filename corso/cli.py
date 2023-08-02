@@ -1,9 +1,22 @@
+"""Play a CLI game of Corso."""
+import argparse
 from itertools import cycle
 
-from corso.model import Corso, Board, Action, Player
+from corso.model import Corso, Board, Action, Player, EMPTY_CELL
 
 MARBLES = ['O', 'A', 'B']
 CELLS = ['O', 'a', 'b']
+
+# CLI
+DESCRIPTION = __doc__
+WIDTH_DESCRIPTION = 'Width of the game grid, defaults to 5.'
+HEIGHT_DESCRIPTION = 'Height of the game grid, defaults to 5.'
+
+
+class Namespace:
+    """Custom namespace for CLI arguments."""
+    width: int = 5
+    height: int = 5
 
 
 def print_board(board: Board):
@@ -92,4 +105,17 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
 
 
 if __name__ == '__main__':
-    cli_game()
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
+
+    parser.add_argument('-w', '--width', required=False, type=int)
+    parser.add_argument('-H', '--height', required=False, type=int)
+
+    namespace = parser.parse_args(namespace=Namespace())
+
+    if namespace.width <= 0 or namespace.height <= 0:
+        raise ValueError('Size of the board must be positive.')
+
+    game_board = tuple([tuple([EMPTY_CELL] * namespace.width)]
+                       * namespace.height)
+
+    cli_game(starting_state=Corso(game_board))
