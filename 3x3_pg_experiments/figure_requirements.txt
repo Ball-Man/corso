@@ -1,0 +1,4 @@
+matplotlib
+tbparse
+fastparquet
+seaborn
