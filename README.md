@@ -20,7 +20,7 @@ pip install .
 ## AI
 Current AIs include:
 * Policy gradient agents (REINFORCE, AC, PPO): they can effectively learn the 3x3 version of the game (see `3x3_pg_experiments/README.md`).
-* MinMax: classic approach based on minimax tree search. MinMax agents where mostly built for evaluation purposes. As such, they are not perfectly optimized. For example, they work on fixed depth, strategies like iterative deepening are entirely missing.
+* MinMax: classic approach based on minimax tree search. MinMax agents were mostly built for evaluation purposes. As such, they are not perfectly optimized. For example, they work on fixed depth, strategies like iterative deepening are entirely missing.
 
 ## Playing
 After installation, it is possible to start a simple two-players session of the game:
