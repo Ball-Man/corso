@@ -47,29 +47,6 @@ def _one_hot_cell(cell: CellState) -> tuple[int, int, int, int]:
     return tuple(one_hot)
 
 
-def model_tensor(state: Corso) -> torch.Tensor:
-    """Retrieve a tensor representing a game state."""
-    # This comes with some necessary reallocations before feeding the
-    # structure to the tensor constructor. Things are cached where
-    # possible. Time cost of this transformation (5x5 board): ~1.5e-5
-    # Organizing the Corso state in a way that is more friendly w.r.t.
-    # this representation (e.g. with one hot encoded tuples as cell
-    # states instead of the abstract CellState class) is the most viable
-    # option after this one.
-
-    board_tensor = torch.Tensor(
-        tuple(tuple(map(_one_hot_cell, row)) for row in state.board))
-
-    # Point of view of the current player
-    if state.player_index == 2:
-        board_tensor = board_tensor[:, :, [2, 3, 0, 1]]
-
-    return board_tensor.flatten()
-
-    # board_tensor = torch.transpose(board_tensor, 1, 2)
-    # return torch.transpose(board_tensor, 0, 1)
-
-
 @lru_cache()
 def _action_indeces(width=DEFAULT_BOARD_SIZE,
                     height=DEFAULT_BOARD_SIZE) -> tuple[int, ...]:
@@ -100,7 +77,7 @@ class PolicyNetwork(nn.Module, SavableModule):
         board_w, board_h = board_size
         self.board_size = board_size
 
-        # W * H * players * 2 + 1 is the input size
+        # W * H * players * 2 is the input size
         # If the number of hidden layers is 0, fall back to this
         # dimentions.
         # hidden_output_size = board_w * board_h * 16
