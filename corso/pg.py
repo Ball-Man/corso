@@ -15,36 +15,11 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from corso.utils import SavableModule
+from corso.utils import SavableModule, bitmap_cell
 from corso.evaluation import AgentEvaluationStrategy
 from corso.model import (Corso, CellState, Action, Player,              # NOQA
                          RandomPlayer, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
                          EMPTY_CELL)
-
-
-@lru_cache()
-def _one_hot_cell(cell: CellState) -> tuple[int, int, int, int]:
-    """Retrieve one hot vector corresponding to a specific state.
-
-    Tuple values represent respectively::
-
-    - First player dyed cell
-    - First player marble
-    - Second player dyed cell
-    - Second player marble
-
-    An empty cell is a tuple of zeroes.
-    """
-    player_index = cell.player_index
-    one_hot = [0, 0, 0, 0]
-
-    if player_index <= 0:
-        return tuple(one_hot)
-
-    one_hot[2 * (player_index - 1) + cell.marble] = 1
-    # We can afford reallocating a tuple, it is going to be cached from
-    # now on.
-    return tuple(one_hot)
 
 
 @lru_cache()
@@ -109,7 +84,7 @@ class PolicyNetwork(nn.Module, SavableModule):
         # option after this one.
 
         board_tensor = torch.Tensor(
-            tuple(tuple(map(_one_hot_cell, row)) for row in state.board))
+            tuple(tuple(map(bitmap_cell, row)) for row in state.board))
 
         # Point of view of the current player
         if state.player_index == 2:

@@ -3,8 +3,11 @@ import abc
 import os
 import os.path
 import json
+from functools import lru_cache
 
 import torch
+
+from corso.model import CellState
 
 
 class SavableModule(abc.ABC):
@@ -58,3 +61,28 @@ class SavableModule(abc.ABC):
         network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
 
         return network
+
+
+@lru_cache()
+def bitmap_cell(cell: CellState) -> tuple[int, int, int, int]:
+    """Retrieve one hot vector corresponding to a specific state.
+
+    Tuple values represent respectively::
+
+    - First player dyed cell
+    - First player marble
+    - Second player dyed cell
+    - Second player marble
+
+    An empty cell is a tuple of zeroes.
+    """
+    player_index = cell.player_index
+    bitmap = [0, 0, 0, 0]
+
+    if player_index <= 0:
+        return tuple(bitmap)
+
+    bitmap[2 * (player_index - 1) + cell.marble] = 1
+    # We can afford reallocating a tuple, it is going to be cached from
+    # now on.
+    return tuple(bitmap)
