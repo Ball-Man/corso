@@ -2,7 +2,7 @@
 
 Current code is designed for two player games.
 """
-from typing import Iterable, Protocol
+from typing import Iterable, Protocol, Optional
 
 import numpy as np
 import torch
@@ -11,6 +11,9 @@ import torch.nn.functional as F
 
 from corso.model import Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM
 from corso.utils import SavableModule, bitmap_cell
+
+
+MCTSTrajectory = list[tuple['MCTSNode', Optional[int]]]
 
 
 class PriorPredictorProtocol(Protocol):
@@ -187,7 +190,7 @@ class AZDenseNetwork(nn.Module, SavableModule):
         return policy_batch, value_batch
 
 
-def puct_siblings(predictions: np.ndarray, counts: np.ndarray,
+def puct_siblings(priors: np.ndarray, counts: np.ndarray,
                   c_puct: float = 1, epsilon: float = 1e-6):
     """Compute PUCT algorithm for siblings.
 
@@ -198,17 +201,22 @@ def puct_siblings(predictions: np.ndarray, counts: np.ndarray,
     ``counts`` shall be the visit counts of sibling nodes in a
     state-action tree.
     """
-    return c_puct * predictions * (np.sqrt(counts.sum() + epsilon)
-                                   / (1 + counts))
+    return c_puct * priors * (np.sqrt(counts.sum() + epsilon) / (1 + counts))
 
 
 class MCTSNode:
-    """"""
+    """MTCS variation as described by AZ.
 
-    def __init__(self, network: PriorPredictorProtocol, state: Corso):
+    Single threaded version.
+    """
+
+    def __init__(self, network: PriorPredictorProtocol, state: Corso,
+                 parent: Optional['MCTSNode'] = None, value: float = 0):
         self.network: PriorPredictorProtocol = network
 
         self.state = Corso()
+        self.parent: Optional['MCTSNode'] = parent
+        self.value: float = value
 
         # All saved metrics are referred to the children of the node
         self.children: list['MCTSNode'] = []
@@ -217,3 +225,84 @@ class MCTSNode:
         self.cumulative_values = np.array([])
         self.actions: list[Action] = []
         self.priors = np.array([])
+
+    def select(self) -> MCTSTrajectory:
+        """Explore existing tree and select node to expand.
+
+        Return the trajectory for the selection (used for backup).
+        Return format is
+        ``[(root_node, selected_index), ..., (node_to_expand, None)]``.
+        """
+        selected_node = self
+        trajectory = []
+
+        while selected_node.children:
+            # Q + U
+            bounds = self.q_values + puct_siblings(self.priors, self.visits)
+            selected_index = bounds.argmax()
+
+            trajectory.append((selected_node, selected_index))
+
+            self.visits[selected_index] += 1
+            selected_node = self.children[selected_index]
+
+        trajectory.append((selected_node, None))
+        return trajectory
+
+    def expand(self):
+        """Expand children.
+
+        Completely populate children nodes and their metrics. Priors
+        are predicted through :attr:`network`. This include the rollout
+        step which is replaced with neural network predictions of the
+        state value function.
+        """
+        # Create nodes
+        self.actions = self.state.actions
+        children_states = [self.state.step(action) for action
+                           in self.actions]
+
+        # Compute priors and state values
+        children_tensor = torch.cat([self.network.state_features(state) for
+                                     state in children_states])
+        with torch.no_grad():
+            logits, values = self.network(children_tensor)
+
+            all_priors = torch.softmax(logits, dim=-1).numpy()
+
+        action_indeces = [action.row * self.state.width + action.column
+                          for action in self.actions]
+        self.priors = all_priors[action_indeces]
+
+        self.children = [MCTSNode(self.network, state, self, value)
+                         for (index, state), value
+                         in zip(enumerate(children_states), values)]
+
+        # Initiaize other metrics
+        self.visits = np.ones_like(self.priors, dtype=int)
+        self.q_values = np.zeros_like(self.priors)
+        self.cumulative_values = np.zeros_like(self.priors)
+
+    @staticmethod
+    def backup(trajectory: MCTSTrajectory):
+        """Backup value along the given trajectory."""
+        backup_value = trajectory[-1][0].value
+
+        for node, child_index in trajectory:
+            if child_index is None:
+                break
+
+            # Move here increment to visits?
+            node.cumulative_values[child_index] += backup_value
+            node.q_values[child_index] = (node.cumulative_values[child_index]
+                                          / node.visits[child_index])
+
+    def search(self):
+        """Run selection, expansion, rollout and backup.
+
+        Expansion and rollout steps are unified for convenience. Rollout
+        is replaced with immediate predictions from the neural network.
+        """
+        trajectory = self.select()
+        trajectory[-1][0].expand()
+        self.backup(trajectory)
