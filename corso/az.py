@@ -154,8 +154,10 @@ class AZDenseNetwork(nn.Module, SavableModule):
             invalid_moves_dyed = reshaped_input[:, :, :, [0, 2]].sum(dim=-1)
             # Moves that are invalid because occupied by opponent marble
             # (only works for two players)
+
             invalid_moves_marble = reshaped_input[
-                :, :, :, 1 + 2 * (1 - current_player.int())].flatten(2)
+                np.arange(0, len(reshaped_input)), :, :,
+                1 + 2 * (1 - current_player.int())].flatten(2)
 
             invalid_moves = (invalid_moves_dyed + invalid_moves_marble).bool()
             invalid_moves = invalid_moves.view(-1, board_w * board_h)
