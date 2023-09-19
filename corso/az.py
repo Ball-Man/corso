@@ -269,29 +269,43 @@ class MCTSNode:
         step which is replaced with neural network predictions of the
         state value function.
         """
-        # Create nodes
+        if self.state.terminal[0]:
+            return
+
+        # Expand self actions and select the correct subset of priors
         self.actions = self.state.actions
+        action_indeces = [action.row * self.state.width + action.column
+                          for action in self.actions]
+        self.priors = self.priors[action_indeces]
+
+        # Compute priors and state values
         children_states = [self.state.step(action) for action
                            in self.actions]
 
-        # Compute priors and state values
         children_tensor = torch.cat([self.network.state_features(state) for
                                      state in children_states])
         with torch.no_grad():
-            logits, values = self.network(children_tensor)
+            logits, predicted_values = self.network(children_tensor)
 
             all_priors = torch.softmax(logits, dim=-1).numpy()
 
+        # If the generated node is terminal, use the true game outcome
+        # as backup value (only works for two players)
+        terminal_map = np.array(
+            [state.terminal for state in children_states], dtype=int)
+        values = predicted_values.numpy().flatten()
+        is_terminal = terminal_map[:, 0].astype(np.bool_)
+        # Map winner to {-1, 1}
+        values[is_terminal] = -2 * terminal_map[is_terminal, 1] + 3
+
         self.children = [MCTSNode(self.network, state, self, value, priors)
                          for state, value, priors
-                         in zip(children_states,
-                                values.numpy().squeeze(),
-                                all_priors)]
+                         in zip(children_states, values, all_priors)]
 
-        # Initiaize other metrics
-        self.visits = np.ones_like(self.priors, dtype=int)
-        self.q_values = np.zeros_like(self.priors)
-        self.cumulative_values = np.zeros_like(self.priors)
+        # Initialize other metrics
+        self.visits = np.ones_like(self.children, dtype=int)
+        self.q_values = np.zeros_like(self.children)
+        self.cumulative_values = np.zeros_like(self.children)
 
     @staticmethod
     def backup(trajectory: MCTSTrajectory):
