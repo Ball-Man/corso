@@ -185,7 +185,7 @@ class AZDenseNetwork(nn.Module, SavableModule):
         for layer in self.value_function_hidden_layers:
             value_batch = F.relu(layer(value_batch))
             value_batch = F.dropout(value_batch, self.dropout, self.training)
-        value_batch = self.value_function_output(value_batch)
+        value_batch = F.tanh(self.value_function_output(value_batch))
 
         return policy_batch, value_batch
 
