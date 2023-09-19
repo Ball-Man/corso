@@ -3,6 +3,7 @@
 Current code is designed for two player games.
 """
 from typing import Iterable, Protocol, Optional
+from itertools import cycle
 
 import numpy as np
 import torch
@@ -237,10 +238,17 @@ class MCTSNode:
         selected_node = self
         trajectory = []
 
+        # Compute factors to shift Q values based on current player
+        # 1 if current player is player1, -1 if player2.
+        initial_player_factor = -2 * self.state.player_index + 3
+        player_factor = cycle((initial_player_factor, -initial_player_factor))
+
         while selected_node.children:
             # Q + U
-            bounds = selected_node.q_values + puct_siblings(
-                selected_node.priors, selected_node.visits)
+            bounds = (next(player_factor) * selected_node.q_values
+                      + puct_siblings(selected_node.priors,
+                                      selected_node.visits))
+
             selected_index = bounds.argmax()
             selected_node.visits[selected_index] += 1
 
