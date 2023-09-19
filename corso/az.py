@@ -211,10 +211,11 @@ class MCTSNode:
     """
 
     def __init__(self, network: PriorPredictorProtocol, state: Corso,
-                 parent: Optional['MCTSNode'] = None, value: float = 0):
+                 parent: Optional['MCTSNode'] = None, value: float = 0,
+                 priors: np.ndarray = np.array([])):
         self.network: PriorPredictorProtocol = network
 
-        self.state = Corso()
+        self.state = state
         self.parent: Optional['MCTSNode'] = parent
         self.value: float = value
 
@@ -224,7 +225,7 @@ class MCTSNode:
         self.q_values = np.array([])
         self.cumulative_values = np.array([])
         self.actions: list[Action] = []
-        self.priors = np.array([])
+        self.priors = priors
 
     def select(self) -> MCTSTrajectory:
         """Explore existing tree and select node to expand.
@@ -238,13 +239,16 @@ class MCTSNode:
 
         while selected_node.children:
             # Q + U
-            bounds = self.q_values + puct_siblings(self.priors, self.visits)
+            bounds = selected_node.q_values + puct_siblings(
+                selected_node.priors, selected_node.visits)
             selected_index = bounds.argmax()
+            selected_node.visits[selected_index] += 1
 
+            # Push current node with the selected child index
             trajectory.append((selected_node, selected_index))
 
-            self.visits[selected_index] += 1
-            selected_node = self.children[selected_index]
+            # Select new node
+            selected_node = selected_node.children[selected_index]
 
         trajectory.append((selected_node, None))
         return trajectory
@@ -270,13 +274,11 @@ class MCTSNode:
 
             all_priors = torch.softmax(logits, dim=-1).numpy()
 
-        action_indeces = [action.row * self.state.width + action.column
-                          for action in self.actions]
-        self.priors = all_priors[action_indeces]
-
-        self.children = [MCTSNode(self.network, state, self, value)
-                         for (index, state), value
-                         in zip(enumerate(children_states), values)]
+        self.children = [MCTSNode(self.network, state, self, value, priors)
+                         for state, value, priors
+                         in zip(children_states,
+                                values.numpy().squeeze(),
+                                all_priors)]
 
         # Initiaize other metrics
         self.visits = np.ones_like(self.priors, dtype=int)
