@@ -330,3 +330,20 @@ class MCTSNode:
         trajectory = self.select()
         trajectory[-1][0].expand()
         self.backup(trajectory)
+
+
+def visits_policy(mcts_root: MCTSNode,
+                  temperature: float = 1.,
+                  epsilon: float = 1e-2) -> np.ndarray:
+    """Return normalized policy, based on exponential visit counts.
+
+    Temperature controls exploration (temp of zero: no exploration,
+    temp of one: exploration is proportional to the original visit
+    counts).
+
+    Output is an array of shape ``(n_actions,)`` where ``n_actions`` is
+    the number of legal actions according to the given ``mcts_root`` (
+    i.e. ``len(mcts_root.actions)``).
+    """
+    exponential_visits = mcts_root.visits ** (1 / (temperature + epsilon))
+    return exponential_visits / exponential_visits.sum()
