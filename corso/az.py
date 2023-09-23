@@ -228,6 +228,16 @@ class MCTSNode:
         self.actions: list[Action] = []
         self.priors = priors
 
+    @classmethod
+    def create_root(cls, network: PriorPredictorProtocol,
+                    state: Corso) -> 'MCTSNode':
+        """Generate a root node, initializing priors from the network."""
+        with torch.no_grad():
+            priors, value = network(network.state_features(state))
+
+        return cls(network, state, value=value.item(),
+                   priors=priors.numpy().squeeze())
+
     def select(self) -> MCTSTrajectory:
         """Explore existing tree and select node to expand.
 
