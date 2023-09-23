@@ -2,6 +2,7 @@
 
 Current code is designed for two player games.
 """
+import random
 from typing import Iterable, Protocol, Optional
 from itertools import cycle
 
@@ -10,7 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from corso.model import Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM
+from corso.model import (Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
+                         Player)
 from corso.utils import SavableModule, bitmap_cell
 
 
@@ -357,3 +359,75 @@ def visits_policy(mcts_root: MCTSNode,
     """
     exponential_visits = mcts_root.visits ** (1 / (temperature + epsilon))
     return exponential_visits / exponential_visits.sum()
+
+
+class AZPlayer(Player):
+    """Corso player based on AZ agent.
+
+    Works for two player games only.
+    """
+
+    def __init__(self, network: PriorPredictorProtocol,
+                 mcts_simulations: int,
+                 temperature: float = 1.,
+                 seed=None):
+        self.network = network
+        self.mcts_simulations = mcts_simulations
+        self.temperature = temperature
+
+        self.rng = random.Random(seed)
+
+        self._mcts_tree: Optional[MCTSNode] = None
+
+        self.last_policy = np.array([])
+
+    def select_action(self, state: Corso,
+                      mcts_tree: Optional[MCTSNode] = None) -> Action:
+        """Select action based on MCTS and internal pretrained network.
+
+        If ``mcts_tree`` is given, use it as starting node for the
+        simulations. It must be true that ``mcts_tree.state == state``.
+        Ultimately, it will also replace the internal tree,
+        which is discarded.
+        Otherwise, the internally stored tree is
+        used. This assumes a two player game, and that the internal tree
+        root is either uninitilized or positioned in a way such that
+        ``state`` can be found in its immediate children. This is only
+        true if this object is used consistently in a two player game.
+        If ``state`` is not found in the immediate children, a new
+        internal tree is created. This ensures correctness even in the
+        case of inconsistent queries, but in such circumstances loses
+        efficiency and potentially optimality.
+
+        After selection of the action is done, :attr:`last_policy` is
+        populated, which can be used to retrieve the policy that was
+        used to make such decision. This is mostly useful for training.
+        """
+        if mcts_tree is None:
+            children_states = ()
+            if self._mcts_tree is not None:
+                children_states = [node.state for node
+                                   in self._mcts_tree.children]
+
+            if state in children_states:
+                # Be aware of the double list lookup
+                # (state in children, children.index)
+                mcts_tree = self._mcts_tree.children[
+                    children_states.index(state)]
+            else:
+                mcts_tree = MCTSNode.create_root(self.network, state)
+
+        for _ in range(self.mcts_simulations):
+            mcts_tree.search()
+
+        self.last_policy = visits_policy(mcts_tree)
+
+        selected_index, = self.rng.choices(
+            range(len(mcts_tree.actions)), weights=self.last_policy,
+            k=1)
+
+        # Move tree search to the selected child in order to preserve
+        # tree during turns
+        self._mcts_tree = mcts_tree.children[selected_index]
+
+        return mcts_tree.actions[selected_index]
