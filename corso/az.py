@@ -431,3 +431,55 @@ class AZPlayer(Player):
         self._mcts_tree = mcts_tree.children[selected_index]
 
         return mcts_tree.actions[selected_index]
+
+
+def episode(az_network: PriorPredictorProtocol,
+            simulations: int,
+            starting_state: Corso = Corso()) -> tuple[
+                list[torch.Tensor], list[torch.Tensor], list[int]]:
+    """Play a full episode of selfplay and return trajectory info.
+
+    Two player games only. Draws are not supported (w * h in board size
+    must be odd).
+
+    Return in order:
+
+    - A list of state tensors
+    - A list of predicted expert policies
+    - A list of returns (1 if won by player1, -1 if player2)
+    """
+    state_tensors = []
+    policies = []
+    winner = 1
+
+    state = starting_state
+
+    # Build two players, but use same network and tree in practice.
+    # This is just for convenience due to implementation details
+    # of AZPlayer
+    mcts = MCTSNode.create_root(az_network, starting_state)
+    players = cycle((AZPlayer(az_network, simulations),
+                     AZPlayer(az_network, simulations)))
+
+    # Iterations: max number of moves in a game of corso is w * h
+    # as the longest game would see each player placing a marble
+    # without expanding.
+    for _ in range(state.width * state.height + 1):
+        player: AZPlayer = next(players)
+
+        action = player.select_action(state, mcts)
+        mcts = player._mcts_tree
+
+        state_tensors.append(az_network.state_features(state))
+        policies.append(player.last_policy)
+
+        state = state.step(action)
+
+        terminal, winner = state.terminal
+        if terminal:
+            break
+
+    # Assign reward (not accounting for draws)
+    rewards = [-2 * winner + 3] * len(state_tensors)
+
+    return state_tensors, policies, rewards
