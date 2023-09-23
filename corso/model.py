@@ -206,6 +206,12 @@ class Corso:
         # Argmax: 3+ times faster than a single for loop
         return Terminal.WON, scores.index(max(scores[1:]))
 
+    def __eq__(self, other: 'Corso') -> bool:
+        """Check equality based on board and player info."""
+        return (self.board == other.board
+                and self.player_num == other.player_num
+                and self.player_index == other.player_index)
+
 
 class Player(abc.ABC):
     """Base class for an automated player."""
