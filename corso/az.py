@@ -484,6 +484,87 @@ def episode(az_network: PriorPredictorProtocol,
             break
 
     # Assign reward (not accounting for draws)
-    rewards = [-2 * winner + 3] * len(state_tensors)
+    returns = [-2 * winner + 3] * len(state_tensors)
 
-    return state_tensors, policies, rewards
+    return state_tensors, policies, returns
+
+
+def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
+          states: torch.Tensor, expert_policies: torch.Tensor,
+          returns: torch.Tensor, epochs=1, batch_size=64):
+    """Train network with generated data."""
+    samples = len(states)
+
+    for epoch in range(epochs):
+        epoch_permutation = torch.randperm(samples)
+
+        for batch_start in range(0, samples, batch_size):
+            # Shuffle
+            perm_batch = epoch_permutation[batch_start                  # NOQA
+                                           : batch_start + batch_size]
+            states_batch = states[perm_batch]
+            expert_policies_batch = expert_policies[perm_batch]
+            returns_batch = returns[perm_batch]
+
+            # Fit
+            optimizer.zero_grad()
+
+            policies_batch, values_batch = network(states_batch)
+            # Loss: MSE for the values (targets are empirical returns)
+            # and CE for policies (targets are expert policies, computed
+            # through MCTS).
+            values_loss = F.mse_loss(values_batch.squeeze(), returns_batch)
+            policy_loss = F.cross_entropy(policies_batch,
+                                          expert_policies_batch)
+            loss = values_loss + policy_loss
+
+            loss.backward()
+            optimizer.step()
+
+
+def _expand_policy(actions: Iterable[Action], policy: np.ndarray,
+                   width=DEFAULT_BOARD_SIZE,
+                   height=DEFAULT_BOARD_SIZE) -> np.ndarray:
+    """Expand a MCTS policy, adding invalid moves (probability 0).
+
+    NB: this step is a slowdown (how slow?) since it has to recompute
+    action indeces, which are already naturally computed internally
+    by :class:`MCTSNode`. Potentially, this step can be merged with
+    the MCTS minimizing lookups and reallocations.
+    """
+    action_indeces = [action.row * width + action.column
+                      for action in actions]
+    expanded_policy = np.zeros(height * width)
+    expanded_policy[action_indeces] = policy
+    return expanded_policy
+
+
+def alphazero(iterations=100, episodes=2, simulations=25):
+    """Run alphazero training loop."""
+    network = AZDenseNetwork()
+
+    optimizer = optim.Adam(network.parameters(), 1e-3, weight_decay=1e-4)
+
+    for iteration_index in range(iterations):
+        print(iteration_index)
+        state_tensors = []
+        policies = []
+        returns = []
+
+        # Collect data
+        network.eval()
+        for episode_index in range(episodes):
+            print('episode', episode_index)
+            ep_state_tensors, ep_policies, ep_returns = episode(network,
+                                                                simulations)
+
+            state_tensors += ep_state_tensors
+            policies += ep_policies
+            returns += ep_returns
+
+        # Train network
+        network.train()
+        train(network, optimizer,
+              torch.cat(state_tensors),
+              torch.from_numpy(np.stack(policies)),
+              torch.tensor(returns, dtype=torch.float32))
