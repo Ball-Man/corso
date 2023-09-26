@@ -236,6 +236,7 @@ class MCTSNode:
         """Generate a root node, initializing priors from the network."""
         with torch.no_grad():
             priors, value = network(network.state_features(state))
+            priors = F.softmax(priors, dim=-1)
 
         return cls(network, state, value=value.item(),
                    priors=priors.numpy().squeeze())
