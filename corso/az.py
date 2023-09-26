@@ -9,6 +9,7 @@ from itertools import cycle
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 
 from corso.model import (Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
@@ -469,12 +470,14 @@ def episode(az_network: PriorPredictorProtocol,
         player: AZPlayer = next(players)
 
         action = player.select_action(state, mcts)
-        mcts = player._mcts_tree
 
         state_tensors.append(az_network.state_features(state))
-        policies.append(player.last_policy)
+        policies.append(
+            _expand_policy(mcts.actions, player.last_policy, mcts.state.width,
+                           mcts.state.height))
 
         state = state.step(action)
+        mcts = player._mcts_tree
 
         terminal, winner = state.terminal
         if terminal:
