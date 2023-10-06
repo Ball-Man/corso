@@ -13,8 +13,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from corso.model import (Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
-                         Player)
+                         Player, RandomPlayer)
 from corso.utils import SavableModule, bitmap_cell
+from corso.evaluation import evaluate
 
 
 MCTSTrajectory = list[tuple['MCTSNode', Optional[int]]]
@@ -539,11 +540,15 @@ def _expand_policy(actions: Iterable[Action], policy: np.ndarray,
     return expanded_policy
 
 
-def alphazero(iterations=100, episodes=2, simulations=25):
+def alphazero(network: PriorPredictorProtocol,
+              iterations=100, episodes=100, simulations=100,
+              epochs_per_iteration=1, learning_rate=1e-3,
+              weight_decay=1e-4):
     """Run alphazero training loop."""
-    network = AZDenseNetwork()
+    # network = AZDenseNetwork(shared_layers_sizes=(100,))
 
-    optimizer = optim.Adam(network.parameters(), 1e-3, weight_decay=1e-4)
+    optimizer = optim.Adam(network.parameters(), learning_rate,
+                           weight_decay=weight_decay)
 
     for iteration_index in range(iterations):
         print(iteration_index)
@@ -564,7 +569,10 @@ def alphazero(iterations=100, episodes=2, simulations=25):
 
         # Train network
         network.train()
-        train(network, optimizer,
-              torch.cat(state_tensors),
-              torch.from_numpy(np.stack(policies)),
-              torch.tensor(returns, dtype=torch.float32))
+        for _ in range(epochs_per_iteration):
+            train(network, optimizer,
+                  torch.cat(state_tensors),
+                  torch.from_numpy(np.stack(policies)),
+                  torch.tensor(returns, dtype=torch.float32))
+
+        print(evaluate(AZPlayer(network, 100), RandomPlayer(), n_games=100))
