@@ -513,7 +513,7 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
             # Loss: MSE for the values (targets are empirical returns)
             # and CE for policies (targets are expert policies, computed
             # through MCTS).
-            values_loss = F.mse_loss(values_batch.squeeze(), returns_batch)
+            values_loss = F.mse_loss(values_batch.flatten(), returns_batch)
             policy_loss = F.cross_entropy(policies_batch,
                                           expert_policies_batch)
             loss = values_loss + policy_loss
