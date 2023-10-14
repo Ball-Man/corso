@@ -120,9 +120,9 @@ class AZDenseNetwork(nn.Module, SavableModule):
     def get_config(self) -> dict:
         """Return a configuration dict: used to save/load the model."""
         return {'board_size': self.board_size,
-                'shared_layers': self.shared_layers_sizes,
-                'policy_hidden_layers': self.policy_hidden_layers_sizes,
-                'value_function_hidden_layers':
+                'shared_layers_sizes': self.shared_layers_sizes,
+                'policy_hidden_layers_sizes': self.policy_hidden_layers_sizes,
+                'value_function_hidden_layers_sizes':
                 self.value_function_hidden_layers_sizes,
                 'num_players': self.num_players}
 
