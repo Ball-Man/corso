@@ -2,8 +2,11 @@
 
 Current code is designed for two player games.
 """
+import math
+import os.path
 import random
-from typing import Iterable, Protocol, Optional
+import datetime
+from typing import Iterable, Protocol, Optional, Sequence
 from itertools import cycle
 
 import numpy as np
@@ -11,11 +14,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 
 from corso.model import (Corso, Action, DEFAULT_BOARD_SIZE, DEFAULT_PLAYER_NUM,
-                         Player, RandomPlayer)
+                         Player)
 from corso.utils import SavableModule, bitmap_cell
-from corso.evaluation import evaluate
+from corso.evaluation import AgentEvaluationStrategy
 
 
 MCTSTrajectory = list[tuple['MCTSNode', Optional[int]]]
@@ -495,7 +499,9 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
           returns: torch.Tensor, epochs=1, batch_size=64):
     """Train network with generated data."""
     samples = len(states)
+    minibatches = math.ceil(samples / batch_size)
 
+    total_loss = 0              # Used to compute mean return value
     for epoch in range(epochs):
         epoch_permutation = torch.randperm(samples)
 
@@ -519,8 +525,12 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
                                           expert_policies_batch)
             loss = values_loss + policy_loss
 
+            total_loss += loss.detach()
+
             loss.backward()
             optimizer.step()
+
+    return total_loss / (minibatches * epochs)
 
 
 def _expand_policy(actions: Iterable[Action], policy: np.ndarray,
@@ -543,15 +553,24 @@ def _expand_policy(actions: Iterable[Action], policy: np.ndarray,
 def alphazero(network: PriorPredictorProtocol,
               iterations=100, episodes=100, simulations=100,
               epochs_per_iteration=1, learning_rate=1e-3,
-              weight_decay=1e-4):
+              weight_decay=1e-4,
+              starting_state: Corso = Corso(),
+              evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
+              writer: Optional[SummaryWriter] = None, seed=None):
     """Run alphazero training loop."""
-    # network = AZDenseNetwork(shared_layers_sizes=(100,))
+    # Build a default writer if not provided
+    if writer is None:
+        writer = SummaryWriter(
+            os.path.join('runs',
+                         datetime.datetime.now().strftime(r'%F-%H-%M-%S')))
 
     optimizer = optim.Adam(network.parameters(), learning_rate,
                            weight_decay=weight_decay)
 
+    evaluation_rng = random.Random(seed)
+
     for iteration_index in range(iterations):
-        print(iteration_index)
+        # print(iteration_index)
         state_tensors = []
         policies = []
         returns = []
@@ -559,9 +578,9 @@ def alphazero(network: PriorPredictorProtocol,
         # Collect data
         network.eval()
         for episode_index in range(episodes):
-            print('episode', episode_index)
-            ep_state_tensors, ep_policies, ep_returns = episode(network,
-                                                                simulations)
+            # print('episode', episode_index)
+            ep_state_tensors, ep_policies, ep_returns = episode(
+                network, simulations, starting_state=starting_state)
 
             state_tensors += ep_state_tensors
             policies += ep_policies
@@ -569,10 +588,22 @@ def alphazero(network: PriorPredictorProtocol,
 
         # Train network
         network.train()
-        for _ in range(epochs_per_iteration):
-            train(network, optimizer,
-                  torch.cat(state_tensors),
-                  torch.from_numpy(np.stack(policies)),
-                  torch.tensor(returns, dtype=torch.float32))
+        mean_loss = train(network, optimizer,
+                          torch.cat(state_tensors),
+                          torch.from_numpy(np.stack(policies)),
+                          torch.tensor(returns, dtype=torch.float32),
+                          epochs=epochs_per_iteration)
+        writer.add_scalar('train/loss', mean_loss, iteration_index)
 
-        print(evaluate(AZPlayer(network, 100), RandomPlayer(), n_games=100))
+        # Evaluate
+        network.eval()
+
+        policy_player = AZPlayer(network, simulations, 0,
+                                 seed=evaluation_rng.random())
+        for evaluation_stragety in evaluation_strageties:
+            evaluation_results = evaluation_stragety.evaluate(
+                policy_player, starting_state=starting_state)
+
+            writer.add_scalars(f'eval/{evaluation_stragety.get_name()}',
+                               evaluation_results._asdict(),
+                               iteration_index)
