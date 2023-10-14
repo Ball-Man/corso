@@ -199,6 +199,193 @@ class AZDenseNetwork(nn.Module, SavableModule):
         return policy_batch, value_batch
 
 
+class AZConvNetwork(nn.Module, SavableModule):
+    """Simple convolutional network for AZ.
+
+    No residual connections are inserted.
+
+    Outputs the tuple ``(policy, value)``, as part of the parameters
+    are shared between the policy network and value network. Output
+    shapes as described by :meth:`PriorPredictorProtocol.__call__`.
+    """
+
+    def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
+                 shared_layers_channels: Iterable[int] = (),
+                 policy_hidden_layers_channels: Iterable[int] = (),
+                 value_function_hidden_layers_sizes: Iterable[int] = (),
+                 kernel_size: int = 3,
+                 num_players=DEFAULT_PLAYER_NUM,
+                 dropout=0.0):
+        super().__init__()
+
+        self.shared_layers_channels = tuple(shared_layers_channels)
+        self.policy_hidden_layers_channels = tuple(
+            policy_hidden_layers_channels)
+        self.value_function_hidden_layers_sizes = tuple(
+            value_function_hidden_layers_sizes)
+        self.kernel_size = kernel_size
+        self.num_players = num_players
+        self.dropout = dropout
+
+        board_w, board_h = board_size
+        self.board_size = board_size
+
+        # Shared layers
+        # player * 2 + 1 is the input channel size: two channels per
+        # player, + 1 for the current turn.
+        # If the number of shared layers is 0, fall back to this
+        # dimentions.
+        # Initialize shared weights
+        shared_output_channels = num_players * 2 + 1
+
+        shared_layers = []
+
+        for shared_layer_channels in shared_layers_channels:
+            shared_layers.append(
+                nn.Conv2d(shared_output_channels, shared_layer_channels,
+                          kernel_size, 1, kernel_size // 2)
+            )
+            shared_output_channels = shared_layer_channels
+
+        self.shared_layers = nn.ModuleList(shared_layers)
+
+        # Batch normalization layers for each convolution
+        self.shared_batch_norm = nn.ModuleList(
+            nn.BatchNorm2d(shared_layer_channels) for shared_layer_channels
+            in shared_layers_channels)
+
+        # Policy head
+        policy_hidden_output_channels = shared_output_channels
+
+        policy_hidden_layers = []
+
+        for policy_layer_channels in policy_hidden_layers_channels:
+            policy_hidden_layers.append(
+                nn.Conv2d(policy_hidden_output_channels, policy_layer_channels,
+                          kernel_size, 1, kernel_size // 2)
+            )
+            policy_hidden_output_channels = policy_layer_channels
+
+        self.policy_hidden_layers = nn.ModuleList(policy_hidden_layers)
+
+        # Output of policy head is always width * height, flatten
+        # channels with a 1x1 convolution.
+        self.policy_output = nn.Conv2d(policy_hidden_output_channels, 1, 1, 1,
+                                       0)
+
+        # Batch normalization layers for each convolution in policy head
+        self.policy_batch_norm = nn.ModuleList(
+            nn.BatchNorm2d(policy_layer_channels) for policy_layer_channels
+            in policy_hidden_layers_channels)
+
+        # Value head
+        # Value head is fed with the flattened output of the shared net.
+        value_function_hidden_output_size = (shared_output_channels * board_w
+                                             * board_h)
+
+        value_function_hidden_layers = []
+
+        for value_function_layer_size in value_function_hidden_layers_sizes:
+            value_function_hidden_layers.append(
+                nn.Linear(value_function_hidden_output_size,
+                          value_function_layer_size))
+            value_function_hidden_output_size = value_function_layer_size
+
+        self.value_function_hidden_layers = nn.ModuleList(
+            value_function_hidden_layers)
+
+        # Output of policy head is always 1
+        self.value_function_output = nn.Linear(
+            value_function_hidden_output_size, 1)
+
+    def get_config(self) -> dict:
+        """Return a configuration dict: used to save/load the model."""
+        return {'board_size': self.board_size,
+                'shared_layers_channels': self.shared_layers_channels,
+                'policy_hidden_layers_channels':
+                self.policy_hidden_layers_channels,
+                'value_function_hidden_layers_sizes':
+                self.value_function_hidden_layers_sizes,
+                'kernel_size': self.kernel_size,
+                'num_players': self.num_players}
+
+    def state_features(self, state: Corso) -> torch.Tensor:
+        """Retrieve a tensor representing a game state.
+
+        Return shape: ``[1, height, width, num_players * 2 + 1]``.
+        """
+        # This comes with some necessary reallocations before feeding the
+        # structure to the tensor constructor. Things are cached where
+        # possible. Time cost of this transformation (5x5 board): ~1.5e-5
+        # Organizing the Corso state in a way that is more friendly w.r.t.
+        # this representation (e.g. with one hot encoded tuples as cell
+        # states instead of the abstract CellState class) is the most viable
+        # option after this one.
+
+        board_tensor = torch.tensor(
+            tuple(tuple(map(bitmap_cell, row)) for row in state.board))
+
+        # Append current player info
+        player_plane = torch.full((state.height, state.width, 1),
+                                  state.player_index - 1.)
+
+        return torch.cat((board_tensor, player_plane), 2).unsqueeze(0)
+
+    def forward(self, batch: torch.Tensor):
+        # Invalid move masking:
+        # Reshape input as a grid and collapse it into a bitmap of
+        # invalid locations
+        with torch.no_grad():
+            board_w, board_h = self.board_size
+
+            current_player = batch[:, 0, 0, -1]
+            # Moves that are invalid because dyed
+            invalid_moves_dyed = batch[
+                :, :, :, [0, 2]].sum(dim=-1)
+            # Moves that are invalid because occupied by opponent marble
+            # (only works for two players)
+
+            invalid_moves_marble = batch[
+                np.arange(0, len(batch)), :, :,
+                1 + 2 * (1 - current_player.int())].flatten(2)
+
+            invalid_moves = (invalid_moves_dyed + invalid_moves_marble).bool()
+
+        # Reshape input to accomodate for convolutions
+        batch = torch.transpose(batch, 2, 3)
+        batch = torch.transpose(batch, 1, 2)
+
+        # Shared layers
+        for layer, batch_norm in zip(self.shared_layers,
+                                     self.shared_batch_norm):
+            batch = F.relu(batch_norm(layer(batch)))
+
+        # Policy head
+        policy_batch = batch
+        for layer, batch_norm in zip(self.policy_hidden_layers,
+                                     self.policy_batch_norm):
+            policy_batch = F.relu(batch_norm(layer(policy_batch)))
+        # Output layer leads to shape: [N, 1, H, W]
+        # Squeeze channel dimension in order to apply invalid moves mask
+        policy_batch = self.policy_output(policy_batch).squeeze(1)
+
+        # Invalid moves are set to an extremely negative value.
+        # Extremely negative logits will results in 0 probability of
+        # choosing the action
+        policy_batch[invalid_moves] = -1e10
+
+        policy_batch = policy_batch.view(-1, board_w * board_h)
+
+        # Value head
+        value_batch = batch.flatten(1)
+        for layer in self.value_function_hidden_layers:
+            value_batch = F.relu(layer(value_batch))
+            value_batch = F.dropout(value_batch, self.dropout, self.training)
+        value_batch = F.tanh(self.value_function_output(value_batch))
+
+        return policy_batch, value_batch
+
+
 def puct_siblings(priors: np.ndarray, counts: np.ndarray,
                   c_puct: float = 1, epsilon: float = 1e-6):
     """Compute PUCT algorithm for siblings.
