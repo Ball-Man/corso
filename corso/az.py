@@ -212,6 +212,7 @@ class AZConvNetwork(nn.Module, SavableModule):
     def __init__(self, board_size=(DEFAULT_BOARD_SIZE, DEFAULT_BOARD_SIZE),
                  shared_layers_channels: Iterable[int] = (),
                  policy_hidden_layers_channels: Iterable[int] = (),
+                 value_function_input_channels: int = 2,
                  value_function_hidden_layers_sizes: Iterable[int] = (),
                  kernel_size: int = 3,
                  num_players=DEFAULT_PLAYER_NUM,
@@ -221,6 +222,7 @@ class AZConvNetwork(nn.Module, SavableModule):
         self.shared_layers_channels = tuple(shared_layers_channels)
         self.policy_hidden_layers_channels = tuple(
             policy_hidden_layers_channels)
+        self.value_function_input_channels = value_function_input_channels
         self.value_function_hidden_layers_sizes = tuple(
             value_function_hidden_layers_sizes)
         self.kernel_size = kernel_size
@@ -279,9 +281,15 @@ class AZConvNetwork(nn.Module, SavableModule):
             in policy_hidden_layers_channels)
 
         # Value head
-        # Value head is fed with the flattened output of the shared net.
-        value_function_hidden_output_size = (shared_output_channels * board_w
-                                             * board_h)
+        # Shared net output is compressed via a 1x1 convolution to
+        # reduce number of parameters of subsequent dense layers.
+        value_function_hidden_output_size = (
+            value_function_input_channels * board_w * board_h)
+        self.value_function_input_conv = nn.Conv2d(
+            shared_output_channels, value_function_input_channels,
+            1, 1)
+        self.value_function_input_batch_norm = nn.BatchNorm2d(
+            value_function_input_channels)
 
         value_function_hidden_layers = []
 
@@ -304,6 +312,8 @@ class AZConvNetwork(nn.Module, SavableModule):
                 'shared_layers_channels': self.shared_layers_channels,
                 'policy_hidden_layers_channels':
                 self.policy_hidden_layers_channels,
+                'value_function_input_channels':
+                self.value_function_input_channels,
                 'value_function_hidden_layers_sizes':
                 self.value_function_hidden_layers_sizes,
                 'kernel_size': self.kernel_size,
@@ -377,7 +387,9 @@ class AZConvNetwork(nn.Module, SavableModule):
         policy_batch = policy_batch.view(-1, board_w * board_h)
 
         # Value head
-        value_batch = batch.flatten(1)
+        value_batch = F.relu(
+            self.value_function_input_batch_norm(
+                self.value_function_input_conv(batch))).flatten(1)
         for layer in self.value_function_hidden_layers:
             value_batch = F.relu(layer(value_batch))
             value_batch = F.dropout(value_batch, self.dropout, self.training)
