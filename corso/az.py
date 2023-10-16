@@ -519,7 +519,8 @@ class MCTSNode:
         # Map winner to {-1, 1}
         values[is_terminal] = -2 * terminal_map[is_terminal, 1] + 3
 
-        self.children = [MCTSNode(self.network, state, self, value, priors)
+        self.children = [MCTSNode(self.network, state, self, value, priors,
+                                  device=self.device)
                          for state, value, priors
                          in zip(children_states, values, all_priors)]
 
@@ -670,7 +671,7 @@ def episode(az_network: PriorPredictorProtocol,
     # Build two players, but use same network and tree in practice.
     # This is just for convenience due to implementation details
     # of AZPlayer
-    mcts = MCTSNode.create_root(az_network, starting_state)
+    mcts = MCTSNode.create_root(az_network, starting_state, device=device)
     players = cycle((AZPlayer(az_network, simulations, device=device),
                      AZPlayer(az_network, simulations, device=device)))
 
