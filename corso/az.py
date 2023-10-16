@@ -420,8 +420,10 @@ class MCTSNode:
 
     def __init__(self, network: PriorPredictorProtocol, state: Corso,
                  parent: Optional['MCTSNode'] = None, value: float = 0,
-                 priors: np.ndarray = np.array([])):
+                 priors: np.ndarray = np.array([]),
+                 device='cpu'):
         self.network: PriorPredictorProtocol = network
+        self.device = device
 
         self.state = state
         self.parent: Optional['MCTSNode'] = parent
@@ -437,14 +439,15 @@ class MCTSNode:
 
     @classmethod
     def create_root(cls, network: PriorPredictorProtocol,
-                    state: Corso) -> 'MCTSNode':
+                    state: Corso, device='cpu') -> 'MCTSNode':
         """Generate a root node, initializing priors from the network."""
         with torch.no_grad():
-            priors, value = network(network.state_features(state))
+            priors, value = network(network.state_features(state).to(device))
             priors = F.softmax(priors, dim=-1)
 
         return cls(network, state, value=value.item(),
-                   priors=priors.numpy().squeeze())
+                   priors=priors.cpu().numpy().squeeze(),
+                   device=device)
 
     def select(self) -> MCTSTrajectory:
         """Explore existing tree and select node to expand.
@@ -501,17 +504,17 @@ class MCTSNode:
                            in self.actions]
 
         children_tensor = torch.cat([self.network.state_features(state) for
-                                     state in children_states])
+                                     state in children_states]).to(self.device)
         with torch.no_grad():
             logits, predicted_values = self.network(children_tensor)
 
-            all_priors = torch.softmax(logits, dim=-1).numpy()
+            all_priors = torch.softmax(logits, dim=-1).cpu().numpy()
 
         # If the generated node is terminal, use the true game outcome
         # as backup value (only works for two players)
         terminal_map = np.array(
             [state.terminal for state in children_states], dtype=int)
-        values = predicted_values.numpy().flatten()
+        values = predicted_values.cpu().numpy().flatten()
         is_terminal = terminal_map[:, 0].astype(np.bool_)
         # Map winner to {-1, 1}
         values[is_terminal] = -2 * terminal_map[is_terminal, 1] + 3
@@ -576,7 +579,8 @@ class AZPlayer(Player):
     def __init__(self, network: PriorPredictorProtocol,
                  mcts_simulations: int,
                  temperature: float = 1.,
-                 seed=None):
+                 seed=None,
+                 device='cpu'):
         self.network = network
         self.mcts_simulations = mcts_simulations
         self.temperature = temperature
@@ -586,6 +590,8 @@ class AZPlayer(Player):
         self._mcts_tree: Optional[MCTSNode] = None
 
         self.last_policy = np.array([])
+
+        self.device = device
 
     def select_action(self, state: Corso,
                       mcts_tree: Optional[MCTSNode] = None) -> Action:
@@ -621,7 +627,8 @@ class AZPlayer(Player):
                 mcts_tree = self._mcts_tree.children[
                     children_states.index(state)]
             else:
-                mcts_tree = MCTSNode.create_root(self.network, state)
+                mcts_tree = MCTSNode.create_root(self.network, state,
+                                                 device=self.device)
 
         for _ in range(self.mcts_simulations):
             mcts_tree.search()
@@ -641,7 +648,7 @@ class AZPlayer(Player):
 
 def episode(az_network: PriorPredictorProtocol,
             simulations: int,
-            starting_state: Corso = Corso()) -> tuple[
+            starting_state: Corso = Corso(), device='cpu') -> tuple[
                 list[torch.Tensor], list[torch.Tensor], list[int]]:
     """Play a full episode of selfplay and return trajectory info.
 
@@ -664,8 +671,8 @@ def episode(az_network: PriorPredictorProtocol,
     # This is just for convenience due to implementation details
     # of AZPlayer
     mcts = MCTSNode.create_root(az_network, starting_state)
-    players = cycle((AZPlayer(az_network, simulations),
-                     AZPlayer(az_network, simulations)))
+    players = cycle((AZPlayer(az_network, simulations, device=device),
+                     AZPlayer(az_network, simulations, device=device)))
 
     # Iterations: max number of moves in a game of corso is w * h
     # as the longest game would see each player placing a marble
@@ -755,7 +762,8 @@ def alphazero(network: PriorPredictorProtocol,
               weight_decay=1e-4,
               starting_state: Corso = Corso(),
               evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
-              writer: Optional[SummaryWriter] = None, seed=None):
+              writer: Optional[SummaryWriter] = None, seed=None,
+              device='cpu'):
     """Run alphazero training loop."""
     # Build a default writer if not provided
     if writer is None:
@@ -779,7 +787,8 @@ def alphazero(network: PriorPredictorProtocol,
         for episode_index in range(episodes):
             # print('episode', episode_index)
             ep_state_tensors, ep_policies, ep_returns = episode(
-                network, simulations, starting_state=starting_state)
+                network, simulations, starting_state=starting_state,
+                device=device)
 
             state_tensors += ep_state_tensors
             policies += ep_policies
@@ -788,9 +797,10 @@ def alphazero(network: PriorPredictorProtocol,
         # Train network
         network.train()
         mean_loss = train(network, optimizer,
-                          torch.cat(state_tensors),
-                          torch.from_numpy(np.stack(policies)),
-                          torch.tensor(returns, dtype=torch.float32),
+                          torch.cat(state_tensors).to(device),
+                          torch.from_numpy(np.stack(policies)).to(device),
+                          torch.tensor(returns,
+                                       dtype=torch.float32).to(device),
                           epochs=epochs_per_iteration)
         writer.add_scalar('train/loss', mean_loss, iteration_index)
 
@@ -798,7 +808,8 @@ def alphazero(network: PriorPredictorProtocol,
         network.eval()
 
         policy_player = AZPlayer(network, simulations, 0,
-                                 seed=evaluation_rng.random())
+                                 seed=evaluation_rng.random(),
+                                 device=device)
         for evaluation_stragety in evaluation_strageties:
             evaluation_results = evaluation_stragety.evaluate(
                 policy_player, starting_state=starting_state)
