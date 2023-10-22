@@ -6,7 +6,7 @@ import math
 import os.path
 import random
 import datetime
-from typing import Iterable, Protocol, Optional, Sequence
+from typing import Iterable, Protocol, Optional, Sequence, Callable
 from itertools import cycle
 from functools import partial
 
@@ -741,7 +741,8 @@ def symmetry_augmentation(states: torch.Tensor,
 
 def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
           states: torch.Tensor, expert_policies: torch.Tensor,
-          returns: torch.Tensor, epochs=1, batch_size=64):
+          returns: torch.Tensor, epochs=1, batch_size=64,
+          augmentations: Sequence[Callable] = ()):
     """Train network with generated data."""
     samples = len(states)
     minibatches = math.ceil(samples / batch_size)
@@ -750,11 +751,21 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
     for epoch in range(epochs):
         epoch_permutation = torch.randperm(samples)
 
+        # Apply augmentations
+        # Unless enormous models are used, batching this transformations
+        # is not necessary, as they don't even involve gradients.
+        # In case of limited resources or great number of samples
+        # (hence, played episodes) it may become necessary to batch.
+        augmented_states = states
+        for augmentation in augmentations:
+            # TODO: proper seeding
+            augmented_states = augmentation(states, torch.default_generator)
+
         for batch_start in range(0, samples, batch_size):
             # Shuffle
             perm_batch = epoch_permutation[batch_start                  # NOQA
                                            : batch_start + batch_size]
-            states_batch = states[perm_batch]
+            states_batch = augmented_states[perm_batch]
             expert_policies_batch = expert_policies[perm_batch]
             returns_batch = returns[perm_batch]
 
@@ -799,6 +810,8 @@ def alphazero(network: PriorPredictorProtocol,
               iterations=100, episodes=100, simulations=100,
               epochs_per_iteration=1, learning_rate=1e-3,
               weight_decay=1e-4,
+              augmentations: Sequence[Callable] = (
+                symmetry_augmentation,),
               starting_state: Corso = Corso(),
               evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
               writer: Optional[SummaryWriter] = None, seed=None,
@@ -840,7 +853,8 @@ def alphazero(network: PriorPredictorProtocol,
                           torch.from_numpy(np.stack(policies)).to(device),
                           torch.tensor(returns,
                                        dtype=torch.float32).to(device),
-                          epochs=epochs_per_iteration)
+                          epochs=epochs_per_iteration,
+                          augmentations=augmentations)
         writer.add_scalar('train/loss', mean_loss, iteration_index)
 
         # Evaluate
