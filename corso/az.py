@@ -8,6 +8,7 @@ import random
 import datetime
 from typing import Iterable, Protocol, Optional, Sequence
 from itertools import cycle
+from functools import partial
 
 import numpy as np
 import torch
@@ -699,6 +700,43 @@ def episode(az_network: PriorPredictorProtocol,
     returns = [-2 * winner + 3] * len(state_tensors)
 
     return state_tensors, policies, returns
+
+
+# Dims [1, 2] identify the board plane according to AZConvNetwork
+# encodings
+SYMMETRIES = (
+    # Rotations
+    lambda s: s,        # Rotate 0 degrees, identity function
+    partial(torch.rot90, k=1, dims=[1, 2]),
+    partial(torch.rot90, k=2, dims=[1, 2]),
+    partial(torch.rot90, k=3, dims=[1, 2]),
+
+    # Reflections (orthogonal)
+    partial(torch.flip, dims=(1,)),
+    partial(torch.flip, dims=(2,)),
+    # Reflections (diagonal)
+    lambda s: torch.rot90(torch.flip(s, (1,)), k=1, dims=[1, 2]),
+    lambda s: torch.rot90(torch.flip(s, (2,)), k=1, dims=[1, 2])
+)
+
+
+def symmetry_augmentation(states: torch.Tensor,
+                          generator: torch.Generator,
+                          symmetries=SYMMETRIES) -> torch.Tensor:
+    """Augment states by exploiting board symmetries."""
+    samples = len(states)
+    augmented_states = torch.zeros_like(states, device=states.device)
+    permutation_index = torch.randperm(samples, generator=generator)
+
+    batch_size = math.ceil(samples / len(symmetries))
+
+    for batch_start, transformation in zip(range(0, samples, batch_size),
+                                           SYMMETRIES):
+        perm_batch = permutation_index[batch_start                  # NOQA
+                                       : batch_start + batch_size]
+        augmented_states[perm_batch] = transformation(states[perm_batch])
+
+    return augmented_states
 
 
 def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
