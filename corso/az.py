@@ -750,8 +750,29 @@ def symmetry_augmentation(states: torch.Tensor, expert_policies: torch.Tensor,
             returns)
 
 
-    return augmented_states, augmented_expert_policies, returns
+def inversion_augmentation(states: torch.Tensor, expert_policies: torch.Tensor,
+                           returns: torch.Tensor,
+                           generator: torch.Generator,
+                           inversion_probability=0.5) -> torch.Tensor:
+    """Augment states by inverting current player."""
+    samples = len(states)
+    augmented_states = states.clone()
+    augmented_returns = returns.clone()
 
+    inversion_map = torch.bernoulli(
+        torch.tensor([inversion_probability]).expand(samples),
+        generator=generator).bool()
+
+    # Invert point of view on selected
+    augmented_states[inversion_map] = states[inversion_map][
+        :, :, :, [2, 3, 0, 1, 4]]
+    # Invert current turn
+    augmented_states[inversion_map, :, :, 4] = 1 - states[
+        inversion_map, :, :, 4]
+    # Invert returns
+    augmented_returns[inversion_map] = -returns[inversion_map]
+
+    return augmented_states, expert_policies, augmented_returns
 
 
 def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
