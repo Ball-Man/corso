@@ -727,13 +727,12 @@ def symmetry_augmentation(states: torch.Tensor, expert_policies: torch.Tensor,
                           ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Augment states by exploiting board symmetries."""
     samples = len(states)
-    augmented_states = torch.zeros_like(states, device=states.device)
+    augmented_states = torch.zeros_like(states)
 
     # Reshape policies to transform them accordingly to state
     # augmentations
     expert_policies_reshaped = expert_policies.view(states.shape[:-1])
-    augmented_expert_policies = torch.zeros_like(expert_policies_reshaped,
-                                                 device=expert_policies.device)
+    augmented_expert_policies = torch.zeros_like(expert_policies_reshaped)
 
     permutation_index = torch.randperm(samples, generator=generator)
     batch_size = math.ceil(samples / len(symmetries))
@@ -849,7 +848,7 @@ def alphazero(network: PriorPredictorProtocol,
               epochs_per_iteration=1, learning_rate=1e-3,
               weight_decay=1e-4,
               augmentations: Sequence[Callable] = (
-                symmetry_augmentation,),
+                symmetry_augmentation, inversion_augmentation),
               starting_state: Corso = Corso(),
               evaluation_strageties: Sequence[AgentEvaluationStrategy] = (),
               writer: Optional[SummaryWriter] = None, seed=None,
