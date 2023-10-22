@@ -720,14 +720,22 @@ SYMMETRIES = (
 )
 
 
-def symmetry_augmentation(states: torch.Tensor,
+def symmetry_augmentation(states: torch.Tensor, expert_policies: torch.Tensor,
+                          returns: torch.Tensor,
                           generator: torch.Generator,
-                          symmetries=SYMMETRIES) -> torch.Tensor:
+                          symmetries=SYMMETRIES
+                          ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Augment states by exploiting board symmetries."""
     samples = len(states)
     augmented_states = torch.zeros_like(states, device=states.device)
-    permutation_index = torch.randperm(samples, generator=generator)
 
+    # Reshape policies to transform them accordingly to state
+    # augmentations
+    expert_policies_reshaped = expert_policies.view(states.shape[:-1])
+    augmented_expert_policies = torch.zeros_like(expert_policies_reshaped,
+                                                 device=expert_policies.device)
+
+    permutation_index = torch.randperm(samples, generator=generator)
     batch_size = math.ceil(samples / len(symmetries))
 
     for batch_start, transformation in zip(range(0, samples, batch_size),
@@ -735,8 +743,15 @@ def symmetry_augmentation(states: torch.Tensor,
         perm_batch = permutation_index[batch_start                  # NOQA
                                        : batch_start + batch_size]
         augmented_states[perm_batch] = transformation(states[perm_batch])
+        augmented_expert_policies[perm_batch] = transformation(
+            expert_policies_reshaped[perm_batch])
 
-    return augmented_states
+    return (augmented_states, augmented_expert_policies.view(samples, -1),
+            returns)
+
+
+    return augmented_states, augmented_expert_policies, returns
+
 
 
 def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
@@ -759,15 +774,17 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
         augmented_states = states
         for augmentation in augmentations:
             # TODO: proper seeding
-            augmented_states = augmentation(states, torch.default_generator)
+            augmented_states, augmented_expert_policies, augmented_returns = \
+                augmentation(states, expert_policies, returns,
+                             torch.default_generator)
 
         for batch_start in range(0, samples, batch_size):
             # Shuffle
             perm_batch = epoch_permutation[batch_start                  # NOQA
                                            : batch_start + batch_size]
             states_batch = augmented_states[perm_batch]
-            expert_policies_batch = expert_policies[perm_batch]
-            returns_batch = returns[perm_batch]
+            expert_policies_batch = augmented_expert_policies[perm_batch]
+            returns_batch = augmented_returns[perm_batch]
 
             # Fit
             optimizer.zero_grad()
