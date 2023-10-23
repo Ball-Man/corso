@@ -792,11 +792,13 @@ def train(network: PriorPredictorProtocol, optimizer: optim.Optimizer,
         # In case of limited resources or great number of samples
         # (hence, played episodes) it may become necessary to batch.
         augmented_states = states
+        augmented_expert_policies = expert_policies
+        augmented_returns = returns
         for augmentation in augmentations:
             # TODO: proper seeding
             augmented_states, augmented_expert_policies, augmented_returns = \
-                augmentation(states, expert_policies, returns,
-                             torch.default_generator)
+                augmentation(augmented_states, augmented_expert_policies,
+                             augmented_returns, torch.default_generator)
 
         for batch_start in range(0, samples, batch_size):
             # Shuffle
