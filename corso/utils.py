@@ -48,7 +48,7 @@ class SavableModule(abc.ABC):
         torch.save(self.state_dict(), self.get_model_path(directory_path))
 
     @classmethod
-    def load(cls, directory_path: str) -> 'SavableModule':
+    def load(cls, directory_path: str, map_location='cpu') -> 'SavableModule':
         """Load model configuration and parameters.
 
         Previously saved via :meth:`save`.
@@ -58,7 +58,8 @@ class SavableModule(abc.ABC):
             config = json.load(file)
 
         network = cls(**config)
-        network.load_state_dict(torch.load(cls.get_model_path(directory_path)))
+        network.load_state_dict(torch.load(cls.get_model_path(directory_path),
+                                           map_location=map_location))
 
         return network
 
