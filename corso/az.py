@@ -582,18 +582,17 @@ class AZPlayer(Player):
                  mcts_simulations: int,
                  temperature: float = 1.,
                  seed=None,
-                 device='cpu'):
+                 device='cpu',
+                 verbose=False):
         self.network = network
         self.mcts_simulations = mcts_simulations
         self.temperature = temperature
-
         self.rng = random.Random(seed)
+        self.device = device
+        self.verbose = verbose
 
         self._mcts_tree: Optional[MCTSNode] = None
-
         self.last_policy = np.array([])
-
-        self.device = device
 
     def select_action(self, state: Corso,
                       mcts_tree: Optional[MCTSNode] = None) -> Action:
@@ -636,6 +635,13 @@ class AZPlayer(Player):
             mcts_tree.search()
 
         self.last_policy = visits_policy(mcts_tree)
+
+        if self.verbose:
+            expanded_policy = _expand_policy(mcts_tree.actions,
+                                             self.last_policy,
+                                             state.width, state.height)
+            print(expanded_policy.reshape((state.height, state.width))
+                                 .round(2))
 
         selected_index, = self.rng.choices(
             range(len(mcts_tree.actions)), weights=self.last_policy,
