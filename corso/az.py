@@ -634,7 +634,8 @@ class AZPlayer(Player):
         for _ in range(self.mcts_simulations):
             mcts_tree.search()
 
-        self.last_policy = visits_policy(mcts_tree)
+        self.last_policy = visits_policy(mcts_tree,
+                                         temperature=self.temperature)
 
         if self.verbose:
             expanded_policy = _expand_policy(mcts_tree.actions,
