@@ -80,7 +80,7 @@ if __name__ == '__main__':
 Play a game against a 3x3 policy gradient pretrained agent:
 ```py
 from corso.cli import cli_game
-from corso.model import EMPTY_BOARD3X3
+from corso.model import Corso, EMPTY_BOARD3X3
 from corso.pg import PolicyNetwork, PolicyNetworkPlayer
 
 
