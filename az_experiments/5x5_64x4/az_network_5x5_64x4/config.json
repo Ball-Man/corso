@@ -1,0 +1,1 @@
+{"board_size": [5, 5], "shared_layers_channels": [64, 64, 64, 64], "policy_hidden_layers_channels": [32], "value_function_input_channels": 2, "value_function_hidden_layers_sizes": [512], "kernel_size": 3, "num_players": 2}

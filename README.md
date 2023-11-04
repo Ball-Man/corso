@@ -19,6 +19,7 @@ pip install .
 
 ## AI
 Current AIs include:
+* AlphaZero-like agent: superhuman player for the standard 5x5 game format (see `az_experiments/README.md`).
 * Policy gradient agents (REINFORCE, AC, PPO): they can effectively learn the 3x3 version of the game (see `3x3_pg_experiments/README.md`).
 * MinMax: classic approach based on minimax tree search. MinMax agents were mostly built for evaluation purposes. As such, they are not perfectly optimized. For example, they work on fixed depth, strategies like iterative deepening are entirely missing.
 
@@ -95,6 +96,25 @@ if __name__ == '__main__':
 ```
 Please note that `policy_net/` must be a pretrained policy trained and saved appropriately, which are not included in the library installation but can be downloaded from this repository. It is possible to download a variety of them from `3x3_pg_experiments/`. For example, try with `3x3_pg_experiments/ppo/policy_net_ppo_1749629150906108955`. A policy network must be a directory, containing two files: `model.pt`, `config.json`.
 
+Similarly, to play against a 5x5 pretrained AlphaZero agent:
+```py
+from corso.cli import cli_game
+from corso.model import Corso
+from corso.az import AZConvNetwork, AZPlayer
+
+NUM_PLAYOUTS = 100
+
+if __name__ == '__main__':
+    starting_state = Corso()
+
+    policy_net = AZConvNetwork.load('policy_net/')
+    policy_player = AZPlayer(policy_net, NUM_PLAYOUTS, 0.)
+
+    cli_game(player1=policy_player,
+             starting_state=starting_state)
+```
+Again, `policy_net/` must be a pretrained policy trained and saved appropriately, which can be downloaded from this repository. Try with the one in `az_experiments/5x5_64x4/az_network_5x5_64x4`.
+
 ## Code style
 Code mostly follow the [PEP8](https://peps.python.org/pep-0008/) style guide. In particular, [Flake8](https://flake8.pycqa.org/en/latest/) with default settings is used as linter.
 
@@ -111,7 +131,12 @@ A simple equivalent VSCode setup (you will be prompted to install Flake):
 ## Aknowledgements
 Corso was created to be featured in the videogame [Lone Planet](https://store.steampowered.com/app/1933170/Lone_Planet/).
 
+AZ AI experiments were designed as project for the *Deep Learning* project work assignment, held at University
+of Bologna. I would like to thank the professor of the related course, Andrea Asperti, for introducing me to Deep Learning.
+
 PG AI experiments were designed as project for the *Automous and Adaptive Systems* course, held at University
 of Bologna (2023). I would like to thank the professor of said course, Mirco Musolesi, for his
-inspiring work. I would also like to thank my colleague Michele Faedi for the great conversations on
+inspiring work.
+
+I would also like to thank my colleague Michele Faedi for the great conversations on
 related topics.
