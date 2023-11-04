@@ -105,6 +105,8 @@ A simple equivalent VSCode setup (you will be prompted to install Flake):
     "python.linting.enabled": true,
 }
 ```
+> [!WARNING]\
+> Since October 2023, `python.linting` has been depreacted. To obtain the same result just install and enable the Flake8 extension.
 
 ## Aknowledgements
 Corso was created to be featured in the videogame [Lone Planet](https://store.steampowered.com/app/1933170/Lone_Planet/).
