@@ -1,6 +1,7 @@
 """Simple minmax agent definition for the two players game of Corso."""
 import random
-import numpy as np
+import math
+from collections.abc import Sequence
 
 from corso.model import Corso, CellState, Player, Action
 
@@ -108,18 +109,17 @@ class MinMaxPlayer(Player):
     def select_action(self, state: Corso) -> Action:
         """Run a minmax search and return best scoring action."""
         actions = state.actions
-        scores = np.fromiter(
+        scores = tuple(
             map(lambda s: minmax_score(s, self.heuristic,
-                                       self.depth),
-                (state.step(a) for a in actions)),
-            dtype=np.float32)
+                                       self.depth) / self.temperature,
+                (state.step(a) for a in actions)))
 
         # In case of a min player, maximize negative of the score
         if state.player_index == 2:
-            scores = -scores
+            scores = [-score for score in scores]
 
         # Compute policy from minmax scores and sample
-        policy = softmax(scores / self.temperature)
+        policy = softmax(scores)
 
         if self.verbose:
             print(tuple(zip(policy, actions)))
@@ -127,8 +127,12 @@ class MinMaxPlayer(Player):
         return self.rng.choices(actions, policy)[0]
 
 
-def softmax(x: np.ndarray) -> np.ndarray:
-    """Stable softmax, decoupled from torch."""
-    shifted_x = x - x.max()
-    numerator = np.exp(shifted_x)
-    return numerator / numerator.sum()
+def softmax(x: Sequence[float]) -> list[float]:
+    """Stable softmax, decoupled from torch and numpy."""
+    max_x = max(x)
+    shifted_x = (val - max_x for val in x)
+
+    numerators = [math.exp(val) for val in shifted_x]
+    denominator = sum(numerators)
+
+    return [numerator / denominator for numerator in numerators]
