@@ -1,11 +1,12 @@
 """Play a CLI game of Corso."""
 import argparse
-from itertools import cycle
+from itertools import cycle, chain
+from string import ascii_lowercase, ascii_uppercase
 
 from corso.model import Corso, Board, Action, Player, EMPTY_CELL
 
-MARBLES = ['O', 'A', 'B']
-CELLS = ['O', 'a', 'b']
+MARBLES = ('O',) + tuple(ascii_uppercase)
+CELLS = ('O',) + tuple(ascii_lowercase)
 
 # CLI
 DESCRIPTION = __doc__
@@ -86,10 +87,19 @@ class CLIPlayer(Player):
 
 
 def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
+             *other_players: Player,
              starting_state: Corso = Corso()):
+    """Start a CLI game."""
+
+    provided_players = 2 + len(other_players)
+    assert starting_state.player_num == provided_players, (
+        'The given starting state is configured for '
+        f'{starting_state.player_num} players, but {provided_players} were '
+        'provided')
+
     state = starting_state
 
-    players = cycle((player1, player2))
+    players = cycle(chain((player1, player2), other_players))
     for _ in range(starting_state.player_index - 1):
         next(players)
 
