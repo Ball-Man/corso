@@ -1,9 +1,11 @@
 """Play a CLI game of Corso."""
 import argparse
+from dataclasses import dataclass, field
 from itertools import cycle, chain
 from string import ascii_lowercase, ascii_uppercase
 
-from corso.model import Corso, Board, Action, Player, EMPTY_CELL
+from corso.model import Corso, Board, Action, Player, RandomPlayer, EMPTY_CELL
+
 
 MARBLES = ('O',) + tuple(ascii_uppercase)
 CELLS = ('O',) + tuple(ascii_lowercase)
@@ -12,12 +14,6 @@ CELLS = ('O',) + tuple(ascii_lowercase)
 DESCRIPTION = __doc__
 WIDTH_DESCRIPTION = 'Width of the game grid, defaults to 5.'
 HEIGHT_DESCRIPTION = 'Height of the game grid, defaults to 5.'
-
-
-class Namespace:
-    """Custom namespace for CLI arguments."""
-    width: int = 5
-    height: int = 5
 
 
 def print_board(board: Board):
@@ -86,6 +82,14 @@ class CLIPlayer(Player):
         return get_action(state)
 
 
+@dataclass
+class Namespace:
+    """Custom namespace for CLI arguments."""
+    width: int = 5
+    height: int = 5
+    players: list[Player] = field(default_factory=list)
+
+
 def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
              *other_players: Player,
              starting_state: Corso = Corso()):
@@ -114,11 +118,36 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
     print(state.terminal)
 
 
+def parse_player(player_type: str) -> Player:
+    """Create a player based on its string description.
+
+    Supported entries::
+    * ``random``, a random player.
+    * ``user``, user player from CLI.
+    * ``mmX``, a MinMax player, with depth X (must be either a positive
+        number or omitted). ``mm`` defaults to a depth of 3. MinMax
+        players are only suitable for two-player games. TODO
+
+    The parsing process is case insensitive.
+    """
+    player_type = player_type.lower()
+
+    if player_type == 'random':
+        return RandomPlayer()
+    elif player_type == 'user':
+        return CLIPlayer()
+
+    raise ValueError(f'Player type "{player_type}" is not supported. '
+                     'Supported types are: "random", "user".')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=DESCRIPTION)
 
     parser.add_argument('-w', '--width', required=False, type=int)
     parser.add_argument('-H', '--height', required=False, type=int)
+    parser.add_argument('-p', '--player', required=False, type=parse_player,
+                        action='append', metavar='PLAYER_TYPE', dest='players')
 
     namespace = parser.parse_args(namespace=Namespace())
 
@@ -128,4 +157,5 @@ if __name__ == '__main__':
     game_board = tuple([tuple([EMPTY_CELL] * namespace.width)]
                        * namespace.height)
 
-    cli_game(starting_state=Corso(game_board))
+    cli_game(*namespace.players,
+             starting_state=Corso(game_board, max(2, len(namespace.players))))
