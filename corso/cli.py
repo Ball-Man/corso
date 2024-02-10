@@ -32,6 +32,8 @@ MINMAX_PLAYER_RE = re.compile(r'mm((?:[1-9]\d*)|)')
 MINMAX_DEFAULT_DEPTH = 3
 MINMAX_DEFAULT_TEMPERATURE = 1e-5
 
+USER_PROMPT = '> '
+
 
 def print_board(board: Board):
     """Print board on CLI."""
@@ -51,7 +53,7 @@ def print_board(board: Board):
 def get_input_pair(state: Corso) -> tuple[int, int]:
     """Retrieve row, column input from user."""
     while True:
-        input_string = input()
+        input_string = input(USER_PROMPT)
         values = input_string.split()
 
         if len(values) != 2:
@@ -127,9 +129,12 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
     while not state.terminal[0]:
         player = next(players)
 
-        print('Player', state.player_index)
         print_board(state.board)
-        state = state.step(player.select_action(state))
+        print()
+
+        action = player.select_action(state)
+        print(f'Player {state.player_index}: {action.row} {action.column}')
+        state = state.step(action)
 
     print_board(state.board)
     print(state.terminal)
