@@ -1,10 +1,12 @@
 """Play a CLI game of Corso."""
 import argparse
+import re
 from dataclasses import dataclass, field
 from itertools import cycle, chain
 from string import ascii_lowercase, ascii_uppercase
 
 from corso.model import Corso, Board, Action, Player, RandomPlayer, EMPTY_CELL
+from corso.minmax import MinMaxPlayer
 
 
 MARBLES = ('O',) + tuple(ascii_uppercase)
@@ -14,6 +16,10 @@ CELLS = ('O',) + tuple(ascii_lowercase)
 DESCRIPTION = __doc__
 WIDTH_DESCRIPTION = 'Width of the game grid, defaults to 5.'
 HEIGHT_DESCRIPTION = 'Height of the game grid, defaults to 5.'
+
+MINMAX_PLAYER_RE = re.compile(r'mm((?:[1-9]\d*)|)')
+MINMAX_DEFAULT_DEPTH = 3
+MINMAX_DEFAULT_TEMPERATURE = 1e-5
 
 
 def print_board(board: Board):
@@ -136,6 +142,15 @@ def parse_player(player_type: str) -> Player:
         return RandomPlayer()
     elif player_type == 'user':
         return CLIPlayer()
+    elif (mm_match := MINMAX_PLAYER_RE.fullmatch(player_type)):
+        try:
+            depth = int(mm_match.group(1))
+        except ValueError:
+            depth = MINMAX_DEFAULT_DEPTH
+
+        # What about a more complex syntax to account for temperature and
+        # seeding?
+        return MinMaxPlayer(depth, temperature=MINMAX_DEFAULT_TEMPERATURE)
 
     raise ValueError(f'Player type "{player_type}" is not supported. '
                      'Supported types are: "random", "user".')
