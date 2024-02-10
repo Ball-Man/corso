@@ -16,6 +16,17 @@ CELLS = ('O',) + tuple(ascii_lowercase)
 DESCRIPTION = __doc__
 WIDTH_DESCRIPTION = 'Width of the game grid, defaults to 5.'
 HEIGHT_DESCRIPTION = 'Height of the game grid, defaults to 5.'
+PLAYER_DESCRIPTION = """\
+Specify one or more player types for the game. Accepted player types
+are: "user", "random", "mmX". "user" is desigend for human input from
+CLI. "random" plays completely randomly. "mmX" is a MinMax player, where
+X specifies the depth of the search. X must be an integer greater than
+1. If omitted, defaults to 3. A suitable range goes from 1 to 6.
+Generally, a deeper search leads to a stronger player. This option
+can be specified multiple times to define the player order. A minumum
+of two players is required. If omitted, "user" type players are
+automatically added.
+"""
 
 MINMAX_PLAYER_RE = re.compile(r'mm((?:[1-9]\d*)|)')
 MINMAX_DEFAULT_DEPTH = 3
@@ -159,10 +170,14 @@ def parse_player(player_type: str) -> Player:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=DESCRIPTION)
 
-    parser.add_argument('-w', '--width', required=False, type=int)
-    parser.add_argument('-H', '--height', required=False, type=int)
+    parser.add_argument('-w', '--width', required=False, type=int,
+                        help=WIDTH_DESCRIPTION)
+    parser.add_argument('-H', '--height', required=False, type=int,
+                        help=HEIGHT_DESCRIPTION)
     parser.add_argument('-p', '--player', required=False, type=parse_player,
-                        action='append', metavar='PLAYER_TYPE', dest='players')
+                        help=PLAYER_DESCRIPTION,
+                        nargs='*', action='extend', metavar='PLAYER_TYPE',
+                        dest='players')
 
     namespace = parser.parse_args(namespace=Namespace())
 
