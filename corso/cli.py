@@ -50,6 +50,11 @@ def print_board(board: Board):
     print('\n'.join(map(' '.join, output_board)))
 
 
+def format_action(action: Action) -> str:
+    """Return a string representing the action for CLI visualization."""
+    return f'{action.row + 1} {action.column + 1}'
+
+
 def get_input_pair(state: Corso) -> tuple[int, int]:
     """Retrieve row, column input from user."""
     while True:
@@ -57,24 +62,25 @@ def get_input_pair(state: Corso) -> tuple[int, int]:
         values = input_string.split()
 
         if len(values) != 2:
-            print('Insert two values separated by a whitespace')
+            print('Insert two values separated by a whitespace '
+                  '(row and column)')
             continue
 
         integers_ok = True
         try:
             row, col = map(int, values)
-            integers_ok &= 0 <= row < state.height
-            integers_ok &= 0 <= col < state.width
+            integers_ok &= 1 <= row <= state.height
+            integers_ok &= 1 <= col <= state.width
         except ValueError:
             integers_ok = False
 
         if not integers_ok:
             print('Input values must be integers.\n'
-                  f'The first value must be in the range [0, {state.height}). '
-                  f'The second value must be in the range [0, {state.width}).')
+                  f'The first value must be in the range [1, {state.height}]. '
+                  f'The second value must be in the range [1, {state.width}].')
             continue
 
-        return row, col
+        return row - 1, col - 1
 
 
 def get_action(state: Corso) -> Action:
@@ -133,7 +139,7 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
         print()
 
         action = player.select_action(state)
-        print(f'Player {state.player_index}: {action.row} {action.column}')
+        print(f'Player {state.player_index}: {format_action(action)}')
         state = state.step(action)
 
     print_board(state.board)
