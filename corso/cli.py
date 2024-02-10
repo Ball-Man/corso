@@ -132,7 +132,7 @@ def parse_player(player_type: str) -> Player:
     * ``user``, user player from CLI.
     * ``mmX``, a MinMax player, with depth X (must be either a positive
         number or omitted). ``mm`` defaults to a depth of 3. MinMax
-        players are only suitable for two-player games. TODO
+        players are only suitable for two-player games.
 
     The parsing process is case insensitive.
     """
