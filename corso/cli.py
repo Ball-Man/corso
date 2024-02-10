@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from itertools import cycle, chain
 from string import ascii_lowercase, ascii_uppercase
 
-from corso.model import Corso, Board, Action, Player, RandomPlayer, EMPTY_CELL
+from corso.model import (Corso, Board, Action, Player, RandomPlayer, EMPTY_CELL,
+                         Terminal)
 from corso.minmax import MinMaxPlayer
 
 
@@ -53,6 +54,18 @@ def print_board(board: Board):
 def format_action(action: Action) -> str:
     """Return a string representing the action for CLI visualization."""
     return f'{action.row + 1} {action.column + 1}'
+
+
+def format_terminal(terminal_pair: tuple[Terminal, int]) -> str:
+    """Return a string representing the exodus of the match for CLI."""
+    terminal, winner = terminal_pair
+
+    if not terminal:
+        return 'The game is not over'
+    elif terminal == Terminal.DRAW:
+        return "It's a draw"
+
+    return f'Player {winner} wins'
 
 
 def get_input_pair(state: Corso) -> tuple[int, int]:
@@ -143,7 +156,7 @@ def cli_game(player1: Player = CLIPlayer(), player2: Player = CLIPlayer(),
         state = state.step(action)
 
     print_board(state.board)
-    print(state.terminal)
+    print(format_terminal(state.terminal))
 
 
 def parse_player(player_type: str) -> Player:
