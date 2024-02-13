@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from itertools import cycle, chain
 from string import ascii_lowercase, ascii_uppercase
 
-from corso.model import (Corso, Board, Action, Player, RandomPlayer, EMPTY_CELL,
-                         Terminal)
+from corso.model import (Corso, Board, Action, Player, RandomPlayer,
+                         EMPTY_CELL, Terminal)
 from corso.minmax import MinMaxPlayer
 
 
