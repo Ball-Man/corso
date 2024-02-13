@@ -1,4 +1,6 @@
+![corso_banner_repo](https://github.com/Ball-Man/corso/assets/12080380/988af775-e6fd-4c3b-8f81-265979ffdd67)
 # Corso
+
 Virtual environment for the game of Corso. The game rules can be found [here](https://gist.github.com/Ball-Man/30c5cad7b906910522b84c1741ad9268).
 
 This repository also serves as container for AI tools and experiments to obtain agents playing the game.
