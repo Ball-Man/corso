@@ -34,16 +34,21 @@ This will start a 5x5 game by default. For a 3x3 game run:
 ```
 python -m corso.cli -H 3 -w 3
 ```
+
+By deafult a fully manual game will start, requiring input for both players. Trivial AI players are available as well. For example, in order to challenge a random agent:
+```
+python -m corso.cli -p user random
+```
+More advanced agents, like neural ones, require custom scripts to setup a match (see [Custom game](#custom-game)).
+
 For more info see `python -m corso.cli -h`.
 
-Be aware that no AI will be playing against you in this phase. Manual input is required for both players.
-
 ### CLI game representation
-When playing a CLI game, moves are represented by coordinates on the grid. In particular, coordinates shall be given as two positive integers separated by a space. For example
-* `0 2`
+When playing a CLI game, moves are represented by coordinates on the grid. In particular, coordinates shall be given as two positive integers separated by a space (row coordinate and column coordinate). Values start at `1`. For example:
+* `1 2`
 * `1 1`
 * `2 3`
-* ...
+* `5 5`
 
 Are valid moves
 
