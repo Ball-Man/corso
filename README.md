@@ -8,7 +8,22 @@ This repository also serves as container for AI tools and experiments to obtain 
 ## Installation
 Python >= 3.9 is required.
 
+
+### Full installation
 Automatic installation can be carried out as usual with pip:
+```
+pip install "corso[all] @ git+https://github.com/Ball-Man/corso"
+```
+or by cloning the repository locally first (useful e.g. for editable/dev installations):
+```
+git clone https://github.com/Ball-Man/corso
+cd corso
+pip install ".[all]"
+```
+This will install all the dependencies, including cumbersome machine learning tools such as `pytorch` and `tensorboard`. The `all` keyword can be replaced with more specific ones, based on the interested features. See [AI](#ai) for more details on specific AI dependencies.
+
+### Minimal installation
+The core of the project is pure Python, so that a minimal installation with no dependecies can be carried out as:
 ```
 pip install git+https://github.com/Ball-Man/corso
 ```
@@ -18,11 +33,16 @@ git clone https://github.com/Ball-Man/corso
 cd corso
 pip install .
 ```
+Note that a minimal installation would only have access to the basic game definition and agents. In particular, the following features modules would be available:
+* `corso.model`: core game definitions and random player.
+* `corso.minmax`: MinMax agents for the game.
+* `corso.cli`: command line interface and utilities. This includes the possibility to run an interactive game on CLI (see [Playing](#playing)).
+
 
 ## AI
 Current AIs include:
-* AlphaZero-like agent: superhuman player for the standard 5x5 game format (see `az_experiments/README.md`).
-* Policy gradient agents (REINFORCE, AC, PPO): they can effectively learn the 3x3 version of the game (see `3x3_pg_experiments/README.md`).
+* AlphaZero-like agent: superhuman player for the standard 5x5 game format (see `az_experiments/README.md`). Use the extra keyword `az` during installation to specifically install this module.
+* Policy gradient agents (REINFORCE, AC, PPO): they can effectively learn the 3x3 version of the game (see `3x3_pg_experiments/README.md`). Use the extra keyword `pg` during installation to specifically install this module.
 * MinMax: classic approach based on minimax tree search. MinMax agents were mostly built for evaluation purposes. As such, they are not perfectly optimized. For example, they work on fixed depth, strategies like iterative deepening are entirely missing.
 
 ## Playing
