@@ -41,7 +41,7 @@ Note that a minimal installation would only have access to the basic game defini
 
 ## AI
 Current AIs include:
-* AlphaZero-like agent: superhuman player for the standard 5x5 game format (see `az_experiments/README.md`). Use the extra keyword `az` during installation to specifically install this module.
+* AlphaZero-like agent: superhuman player for the standard 5x5 game format (see [az_experiments](az_experiments/README.md) or the [complete report](az_experiments/Mastering_the_game_of_Corso_without_human_knowledge.pdf)). Use the extra keyword `az` during installation to specifically install this module.
 * Policy gradient agents (REINFORCE, AC, PPO): they can effectively learn the 3x3 version of the game (see `3x3_pg_experiments/README.md`). Use the extra keyword `pg` during installation to specifically install this module.
 * MinMax: classic approach based on minimax tree search. MinMax agents were mostly built for evaluation purposes. As such, they are not perfectly optimized. For example, they work on fixed depth, strategies like iterative deepening are entirely missing.
 

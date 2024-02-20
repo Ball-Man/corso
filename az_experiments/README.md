@@ -1,5 +1,5 @@
 # Corso AlphaZero-like experiments
-This set of experiments originates as a project work for the *Deep Learning* module, held at University of Bologna.
+This set of experiments originates as a project work for the *Deep Learning* module, held at University of Bologna. See the complete report: [Matering the game of Corso without human knowledge](Mastering_the_game_of_Corso_without_human_knowledge.pdf).
 
 This directory contains all the artifacts obtained from the experiments, and the specific scripts used to do so. In particular:
 * `5x5_64x4/` contain the artifacts relative to their algorithm. That is:
